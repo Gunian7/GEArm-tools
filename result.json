@@ -1,0 +1,130 @@
+{
+  "host_tests": "passed",
+  "arm_build": "passed",
+  "hardware": "not_connected",
+  "artifacts": {
+    "mc02_serial_test.elf": {
+      "path": "F:\\Output\\Project_Launch\\GEArm\\serial-test\\build\\mc02_serial_test.elf",
+      "sha256": "5af2eadf37042804b8cdc720d1ec1a587c8a4bfdb535948993ea8f145c1ab8f5",
+      "bytes": 2136772
+    },
+    "mc02_serial_test.hex": {
+      "path": "F:\\Output\\Project_Launch\\GEArm\\serial-test\\build\\mc02_serial_test.hex",
+      "sha256": "9d4a914c0985cdbf88389fbedce6ec40987db803413b016da740bdb510ec1d6a",
+      "bytes": 89349
+    },
+    "mc02_serial_test.bin": {
+      "path": "F:\\Output\\Project_Launch\\GEArm\\serial-test\\build\\mc02_serial_test.bin",
+      "sha256": "997f53317ab791b0d4d270b7c186c1f6094b3f5502d6998811892bf301812df9",
+      "bytes": 31740
+    },
+    "mc02_serial_test.map": {
+      "path": "F:\\Output\\Project_Launch\\GEArm\\serial-test\\build\\mc02_serial_test.map",
+      "sha256": "c51aae05ed213bfcc4690ca4b4f671a21bcead279b11b7d577405e5c2edf78d9",
+      "bytes": 661717
+    },
+    "host_tests.exe": {
+      "path": "F:\\Output\\Project_Launch\\GEArm\\serial-test\\build\\host_tests.exe",
+      "sha256": "c9595c99ed4618706d715cb3a07ead4b3d6054f1b31c7f3891d9e5101ecbd5d8",
+      "bytes": 37325
+    },
+    "symbols.txt": {
+      "path": "F:\\Output\\Project_Launch\\GEArm\\serial-test\\build\\symbols.txt",
+      "sha256": "7072687ed94de66d0d1ea21ae8872eaa1608f7d71000489a68e22532b60f6355",
+      "bytes": 18425
+    },
+    "size.txt": {
+      "path": "F:\\Output\\Project_Launch\\GEArm\\serial-test\\build\\size.txt",
+      "sha256": "612c2f5d5755bbb8ed357cf94b748915bced1665fc2ec4b0ce1ffc2a93d83673",
+      "bytes": 161
+    }
+  },
+  "compiler": "arm-none-eabi-gcc.exe (GNU Tools for STM32 13.3.rel1.20240926-1715) 13.3.1 20240614\nCopyright (C) 2023 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+  "host_compiler": "clang version 18.1.7\nTarget: x86_64-pc-windows-msvc\nThread model: posix\nInstalledDir: F:\\Tool\\MATLAB R2025a(64bit)\\toolbox\\sldrt\\clang\\win64\n",
+  "host_test_output": "HOST_TESTS pass=104 fail=0\n",
+  "host_pass": 104,
+  "host_fail": 0,
+  "swd_symbols": [
+    "080009d2 00000004 T SysTick_Handler",
+    "080009e4 0000000c T FDCAN1_IT0_IRQHandler",
+    "080009f0 00000004 T FDCAN1_IT1_IRQHandler",
+    "08000a88 0000000c T USART1_IRQHandler",
+    "2400038c 00000038 B link"
+  ],
+  "size": "   text\t   data\t    bss\t    dec\t    hex\tfilename\n  31484\t    256\t  10016\t  41756\t   a31c\tF:\\Output\\Project_Launch\\GEArm\\serial-test\\build\\mc02_serial_test.elf\n",
+  "references_sha256": {
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Core\\Src\\system_stm32h7xx.c": "2ea5c2bd1c55e454fcbe26612c0b2a57f321fffb857ccd92844682288dd62518",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Core\\Startup\\startup_stm32h723vgtx.s": "8460ce955e1ab8ccd9bbf22b62351058035ed0f2c8020b3c91c09d84cc48f416",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal.c": "3e46894e1870c682b6362c0536d5a5ded6cf5541f54559e5cc591e90352f0bfc",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_cortex.c": "9df95c02feab163763ac752c17c07f0a10f6bd7d303f659e950dd8b6b4cce2c9",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_rcc.c": "99c51eaf3e01a9040e3080b2d0f537fd546e63792b571f74fc39bdc481d82116",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_rcc_ex.c": "ba3ffa42989a60a93e8de7f148cde4fa22c6853223d00d5d9954ad370c6012fe",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_pwr.c": "87dc25ff1b0a58773eeed5a87de133167cfe4306bf54aa884889a61d8a5bd7f4",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_pwr_ex.c": "15469705b458ee696d3ca241ea85ec371c2463a5ac629ab9078d2912dab19c8c",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_flash.c": "f5d7fae3a1dce51e81c099a48a39c2076ee79932a7d369a76a2dd1d5b0e8103f",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_flash_ex.c": "aea2f7cf88a97ff6e9eb6afd542ee9aa1f1be2946db834625df176f2a383497f",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_gpio.c": "e8cb800d746479f9b768e6845dfd2c84867a0b264101afb21f5ad799e3a65ae2",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_dma.c": "e1b72f89360c46185e557e9ae3ad9c0b36978130dbf010ac54a089a850a9d2cf",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_dma_ex.c": "a8bc1642a339acba8aaa7be9101854ab36319efcf2a3ba299760451af31585d1",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_uart.c": "24be6acbe1eaad088184086efb3a4ce309e00e90ceeeecbf3e112b8ec23bb429",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_uart_ex.c": "ef3ee8fb9ea24163b9ed0b0e6078bba36b071de3ff9af16a7914df634e0bb191",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\Drivers\\STM32H7xx_HAL_Driver\\Src\\stm32h7xx_hal_fdcan.c": "beb1ee442655f607984b1df1bed4caf99dc50a00ea0670c72c917b65aa1657ee",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\hal\\stm32h7xx_hal_pcd.c": "c4902778f107efb93d72d48c400f74f63ba36673448edc086341501d694e186c",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\hal\\stm32h7xx_hal_pcd_ex.c": "8f3e8ed1374169be6ecabfd2e55d7c17f8142d0e21c9da0b343df9dc7607a893",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\hal\\stm32h7xx_ll_usb.c": "e4c5aad90a86a76d64e2bccad6e071565ed8fe0cc377f14c9e3354ac156738a5",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\hal\\stm32h7xx_hal_spi.c": "f7a8cb6a3e29bc0ea9f3e08202614ebf72b75028effd266249561e3cfcd4f5f8",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\hal\\stm32h7xx_hal_spi_ex.c": "9312b1a0444171c614ef2f5ec85d65295753c90dcdc11e87bd6f739ba5d3e557",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\App\\usb_device.c": "4f08a1846f0935f61f2ee1e56f042a1c07c5513f7b4c36f3a72d3fdb76130c1c",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\App\\usbd_desc.c": "e095963fdb72d0b13339d47d48b550ae3940a921611c443de3a60bea30489431",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\App\\usbd_cdc_if.c": "eec3a16c93d4f5ae755942509a21b66e83131fc30ad94bb26a03b099c12ebd7e",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\Target\\usbd_conf.c": "5a972c4c2aa1d9e86e7b0e3cafe410c172a606e14fa769bdaeebbb63db17bc21",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\Middlewares\\ST\\STM32_USB_Device_Library\\Core\\Src\\usbd_core.c": "595af70687e3b8ef251110b0794476bce2d384cb994fcfde2cefb8a3c6e536d9",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\Middlewares\\ST\\STM32_USB_Device_Library\\Core\\Src\\usbd_ctlreq.c": "623ebebb6948ec16a281c1cc17b50d4a96e635d5af2516c79d260252fca5133c",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\Middlewares\\ST\\STM32_USB_Device_Library\\Core\\Src\\usbd_ioreq.c": "047c63014d1242a8d4254495d019f710bead71de566897c6daaf97f496a019b4",
+    "F:\\Output\\Project_Launch\\GEArm\\serial-test\\usb\\Middlewares\\ST\\STM32_USB_Device_Library\\Class\\CDC\\Src\\usbd_cdc.c": "50b507f2f42afb1fe65232a7144567a49ccda19e97c214166eadd6261ca374b5",
+    "F:\\Output\\Project_Launch\\GEArm\\GEArm-H723-Firmware\\STM32H723VGTX_FLASH.ld": "3ec8f90b09a39be26792e20a49349c4324a52e0c06699934bad27a92cd514d89"
+  },
+  "source_sha256": {
+    "baud_scan.py": "1bfce9847effee2816a8af49d48576b3ca8e5bd91f20415e3bca6efa672d1552",
+    "build.py": "481303a04d1edbb459845745a73a8acf7a520d21ecf59e258bf1742e89c5c05a",
+    "build_kinematics.py": "b86cd8aa4e11f5a17c0bb2e49b857bc7f29cb770355a5bbf4836118a0b855457",
+    "build_virtual.py": "c4595ce095197885218355b0a46ed6d81370e92bc4fc0a2175b83220c3d31234",
+    "dh_from_firmware.h": "665ae1836cf07259b717825eb45ca4dfee504e0a8b1aa84b37460147887ebc25",
+    "e2e_link_test.py": "ece3846893d5fce51f5217efd9e146229544ce4a3d171c19d81c630f28ae24c6",
+    "episode_recorder.py": "14faca0dfdf2fb880c6e66ca4a9bfddc66f96e8be6f3f9950f7863a232e5c529",
+    "export_lerobot.py": "ed37a638dbe0c46a869871ba1d9b2f28185f95e5e05e948bbf823202666f6f98",
+    "host_entry.c": "78198f61003bea67c3da571351f2e1604ecbeb1c33a3072aef1c427c66060576",
+    "hw_probe.py": "51cc90d0b35660c06bdf65b6b18cc3fadd5ccb59e9680613a00877b80938c601",
+    "integration_link_test.py": "f8975a8e9dc3e3ca227b93676492933f060f910ea9a1975ce592e9d3e17a703b",
+    "kinematics.py": "a87ef20bec01df7fbd16257f618238eaece64f5e47f0134d3c8354470a73a3a3",
+    "kinematics_host.c": "920f04a1fde73d48264452366de540f73fda23203950092727da6290cbc6dbbb",
+    "main.c": "e8e878f9f0b10e41f3296ff6cb50db1639462a3117757a14710228d5f3afd927",
+    "pc_service.py": "f15a422d87f880f5c3135ff9834fa5d22730f948f62ba36f1a45c103706645c2",
+    "protocol.c": "b2f9dfad4f37ffbf5dee95fda2eb92ecbca348053595853fd6860d942fe445b0",
+    "protocol.h": "2e3e75294df04d2b244098fd5141565dac9596bc5a7b49e66ec5ddfa9b9951a8",
+    "runtime.c": "881fd6e888a68b3c36faf2d8d07958f95c933d174268ef44de059960383e8910",
+    "rx_baud_scan.py": "8f40cdea8abf5f5f4987d9e418f395f766d9b11dce9073bcec5396337075aad4",
+    "tests.c": "0ea5835d924d41e6604b2170a370fd631ec04e2926b2697af42cdf35ab83565a",
+    "tests_episode_recorder.py": "fd817267e6917f2c3e9fcb4d32bfee40a85aae49bb474de3d20b573c98a9b9bb",
+    "tests_export_lerobot.py": "23d3da18cad66eadf1923928147244925b82728de0df83ea02970d63cb3e98cd",
+    "tests_urdf_kinematics.py": "feeab71fb44dc80c0b9c64722a4bc7c7de10e7800a8966d26cd6005981e2e581",
+    "urdf_kinematics.py": "22496e83e4258f393e4297027b0c7ff425cd6a6cd3120f8cbaaff4f423d07ec1",
+    "virtual_mc02.c": "681613ed9ed6a4fb4059d959f1367c2aec7219fdc4e6a94e97e0120ba3cd98b4",
+    "virtual_mc02.py": "b087b7c4df0511b3ef7960d1a242998e1dcbe7c5d063de30bfd40c3c5d7310a8"
+  },
+  "tested": [
+    "native shared protocol/state machine with fake transport/time",
+    "real ARM GCC compile/link",
+    "nm/size/artifact hashes",
+    "pc_service.py --selftest is separate and does not open a port"
+  ],
+  "untested": [
+    "真实启动",
+    "HSE 锁定",
+    "USB CDC 枚举与 COM 号分配",
+    "CAN 真实回包",
+    "VOS/Flash 时序",
+    "TX 取消时序",
+    "WS2812/SPI6 时序（已从关键路径移除）"
+  ]
+}

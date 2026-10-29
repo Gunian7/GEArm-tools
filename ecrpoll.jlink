@@ -1,0 +1,29 @@
+device STM32H723VG
+si SWD
+speed 4000
+connect
+h
+mem32 0x4000A040 1
+mem32 0x4000A044 1
+go
+h
+mem32 0x4000A040 1
+mem32 0x4000A044 1
+go
+h
+mem32 0x4000A040 1
+mem32 0x4000A044 1
+go
+h
+mem32 0x4000A040 1
+mem32 0x4000A044 1
+go
+h
+mem32 0x4000A040 1
+mem32 0x4000A044 1
+go
+h
+mem32 0x4000A040 1
+mem32 0x4000A044 1
+go
+exit

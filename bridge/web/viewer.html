@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GEArm 三维操纵 · 干跑</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { overflow: hidden; }
+    .app { display: grid; grid-template-columns: 300px minmax(0, 1fr); height: 100vh; }
+    .side { background: var(--panel); border-right: 1px solid var(--line-soft); padding: 14px;
+            overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+    .viewport { position: relative; background: #0b0c0d; }
+    #gl { position: absolute; inset: 0; }
+    .hud { position: absolute; left: 12px; top: 12px; display: flex; gap: 8px; flex-wrap: wrap; pointer-events: none; }
+    .hud .pill { min-width: 0; background: rgba(15, 16, 17, 0.86); backdrop-filter: blur(6px); }
+    .hudbar { position: absolute; right: 12px; top: 12px; display: flex; gap: 6px; }
+    .hudbar button { background: rgba(15, 16, 17, 0.86); font-size: 12px; padding: 6px 10px; width: auto;
+                     backdrop-filter: blur(6px); }
+    .mode { border-color: rgba(94, 106, 210, 0.4); background: rgba(94, 106, 210, 0.08);
+            color: var(--body); padding: 9px 11px; font-size: 12px; line-height: 1.6; border-radius: 8px; }
+    .mode strong { color: var(--ink); font-weight: 590; }
+    h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--subtle); margin: 0; }
+    h1 { font-size: 19px; letter-spacing: -0.02em; }
+    .row { display: grid; grid-template-columns: 26px 26px minmax(0, 1fr) 26px 50px; align-items: center;
+           gap: 6px; margin: 6px 0; font-size: 12px; color: var(--body); }
+    .row output { font-family: var(--mono); text-align: right; color: var(--ink); font-size: 12px; }
+    button.step { padding: 3px 0; font-size: 14px; line-height: 1.2; text-align: center; color: var(--muted); }
+    button.step:hover { color: var(--ink); background: rgba(255, 255, 255, 0.06); }
+    input[type="range"] { width: 100%; accent-color: var(--accent-hi); background: transparent; border: none; padding: 0; }
+    .xyz { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .xyz label { display: flex; flex-direction: column; font-size: 10px; color: var(--subtle);
+                 gap: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .xyz input { width: 100%; }
+    .btns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+    .btns button { font-size: 12px; padding: 7px 0; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.primary:hover { background: var(--accent-hi); border-color: var(--accent-hi); color: #fff; }
+    button[disabled] { opacity: .4; cursor: not-allowed; }
+    .kv { display: flex; justify-content: space-between; gap: 8px; font-family: var(--mono);
+          font-size: 11.5px; padding: 4px 0; border-bottom: 1px solid var(--line-soft); }
+    .kv:last-child { border-bottom: none; }
+    .kv span { color: var(--muted); }
+    .kv strong { text-align: right; color: var(--ink); font-weight: 500; }
+    .speedrow { display: grid; gap: 7px; margin-top: 9px; }
+    .speedrow label { display: flex; justify-content: space-between; align-items: center;
+                      font-size: 11px; color: var(--muted); gap: 8px; }
+    .speedrow input { width: 86px; }
+    .hintbox { font-size: 11px; color: var(--subtle); margin: 9px 0 0; line-height: 1.55; }
+    .tasklab { display: flex; flex-direction: column; gap: 4px; font-size: 10px;
+               color: var(--subtle); text-transform: uppercase; letter-spacing: 0.05em; }
+    .tasklab input { width: 100%; font-family: var(--sans); }
+    #replay select { width: 100%; font-family: var(--mono); font-size: 12px; padding: 5px 6px;
+                     background: rgba(255,255,255,0.02); color: var(--ink);
+                     border: 1px solid var(--line); border-radius: 6px; }
+    .warnbox { font-size: 11px; line-height: 1.6; margin: 9px 0 0; padding: 8px 10px;
+               color: #e8c07a; background: rgba(210, 153, 34, 0.09);
+               border: 1px solid rgba(210, 153, 34, 0.32); border-radius: 8px; }
+    .warnbox strong { color: #f0d49a; }
+    #diag { max-height: 124px; overflow-y: auto; }
+    #log { font-family: var(--mono); font-size: 11px; color: var(--muted);
+           max-height: 112px; overflow-y: auto; margin: 0; padding-left: 16px; }
+    #log li.bad { color: var(--red); }
+    .loading { position: absolute; inset: 0; display: grid; place-items: center;
+               background: #0b0c0d; color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div>
+      <p class="eyebrow">GEArm · 三维操纵</p>
+      <h1 style="font-size:21px">URDF 实时视图</h1>
+    </div>
+    <p class="mode"><strong>干跑模式（虚拟设备）。</strong>画面几何即运动学：
+       FK 直接读自 URDF 场景链，IK 在同一链上数值求解，坐标帧与末端同源。
+       坐标已转为屏幕坐标系（<strong>绿轴 Y 朝上</strong>，读数与所见一致）。
+       <strong>不发送任何运动命令</strong>。</p>
+
+    <div>
+      <h2>关节（度）· 加减步进</h2>
+      <div id="sliders"></div>
+    </div>
+
+    <div>
+      <h2>末端目标 XYZ（mm）</h2>
+      <div class="xyz">
+        <label>X<input id="tx" type="number" step="1" value="0"></label>
+        <label>Y<input id="ty" type="number" step="1" value="250"></label>
+        <label>Z<input id="tz" type="number" step="1" value="200"></label>
+      </div>
+      <div class="btns">
+        <button id="solve" type="button">求解 IK</button>
+        <button id="home" type="button">回到零位</button>
+      </div>
+      <div class="kv" style="margin-top:8px"><span>IK 残差</span><strong id="res">-</strong></div>
+    </div>
+
+    <div>
+      <h2>速度</h2>
+      <div id="speed"></div>
+    </div>
+
+    <div>
+      <h2>数据录制（BC）</h2>
+      <div id="rec">
+        <label class="tasklab">任务描述
+          <input id="task" type="text" placeholder="例如：把方块从左边搬到右边" maxlength="120">
+        </label>
+        <div class="btns">
+          <button id="rec-start" type="button">开始录制</button>
+          <button id="rec-auto" type="button" disabled>连续录制 50Hz</button>
+          <button id="rec-frame" type="button" disabled>录一帧</button>
+          <button id="rec-stop" type="button" disabled>停止</button>
+        </div>
+        <div class="kv" style="margin-top:8px"><span>状态</span><strong id="rec-state">空闲</strong></div>
+        <div class="kv"><span>已录帧数</span><strong id="rec-count">0</strong></div>
+        <div class="kv"><span>实测帧率</span><strong id="rec-rate">-</strong></div>
+        <div class="kv"><span>episode</span><strong id="rec-index">-</strong></div>
+        <p class="hintbox">动作空间＝6 关节角；观测＝6 关节角＋TCP  XYZ；标称 50Hz。
+          超出 URDF 关节限位的帧会被拒绝。连续录到 3000 帧（约 60 秒）自动停止。</p>
+        <p class="warnbox" id="rec-warn">注意：当前是<strong>干跑数据</strong>——观测取自页面滑块，
+          不是从设备读回的关节角。接入硬件后必须改为「指令＝发给固件的命令，
+          观测＝固件回报的角度」，否则训练出来的策略无法迁移到实物。</p>
+        <div class="btns">
+          <button id="rec-verify" type="button">校验最近一集</button>
+        </div>
+        <div class="kv" style="margin-top:8px"><span>校验结果</span><strong id="rec-verify-out">-</strong></div>
+      </div>
+    </div>
+
+    <div>
+      <h2>回放</h2>
+      <div id="replay">
+        <div class="speedrow">
+          <label>episode <select id="replay-list"></select></label>
+          <label>播放倍速
+            <select id="replay-speed">
+              <option value="0.25">0.25×</option>
+              <option value="1" selected>1×</option>
+              <option value="2">2×</option>
+              <option value="5">5×</option>
+            </select>
+          </label>
+        </div>
+        <div class="btns">
+          <button id="replay-play" type="button">播放</button>
+          <button id="replay-stop" type="button">停止</button>
+        </div>
+        <div class="kv" style="margin-top:8px"><span>进度</span><strong id="replay-pos">-</strong></div>
+        <div class="kv"><span>该帧 TCP</span><strong id="replay-tcp">-</strong></div>
+        <p class="hintbox">回放只读已录数据并驱动画面，不接触设备、不发任何指令。
+          用于肉眼核对录制内容是否是你想要的动作。</p>
+      </div>
+    </div>
+
+    <div>
+      <h2>当前 TCP（mm）</h2>
+      <div class="kv"><span>X</span><strong id="tcp-x">-</strong></div>
+      <div class="kv"><span>Y</span><strong id="tcp-y">-</strong></div>
+      <div class="kv"><span>Z</span><strong id="tcp-z">-</strong></div>
+      <div class="kv"><span>连接</span><strong id="conn">-</strong></div>
+      <div class="kv"><span>帧率</span><strong id="fps">-</strong></div>
+    </div>
+
+    <div>
+      <h2>模型加载明细</h2>
+      <div id="diag"></div>
+    </div>
+
+    <div style="margin-top:auto">
+      <h2>日志</h2>
+      <ol id="log"></ol>
+    </div>
+  </aside>
+
+  <div class="viewport">
+    <canvas id="gl"></canvas>
+    <div class="hud">
+      <p class="pill" id="pill-model">模型加载中</p>
+      <p class="pill" id="pill-mode">干跑 · 不发送运动命令</p>
+    </div>
+    <div class="hudbar">
+      <button id="view-iso" type="button">等轴视图</button>
+      <button id="view-front" type="button">正视图</button>
+      <button id="view-top" type="button">俯视图</button>
+    </div>
+    <div class="loading" id="loading">正在加载 URDF 与 STL 网格（约 20 MB）…</div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/controls/OrbitControls.js": "./vendor/addons/controls/OrbitControls.js",
+    "three/addons/loaders/STLLoader.js": "./vendor/addons/loaders/STLLoader.js"
+} }
+</script>
+<script type="module" src="viewer.js"></script>
+</body>
+</html>

@@ -1,0 +1,195 @@
+/* GEArm bridge console — Linear-style dark surface.
+ *
+ * Near-black canvas, luminance stepping instead of shadows, whisper-thin
+ * semi-transparent borders, and a single indigo accent reserved for
+ * interactive elements. No external font dependency: system UI stacks stand in
+ * for Inter, ui-monospace for Berkeley Mono. */
+
+:root {
+  color-scheme: dark;
+
+  /* surfaces */
+  --bg: #08090a;
+  --panel: #0f1011;
+  --surface: #191a1b;
+  --surface-hi: #23252a;
+
+  /* text */
+  --ink: #f7f8f8;
+  --body: #d0d6e0;
+  --muted: #8a8f98;
+  --subtle: #62666d;
+
+  /* accent + status */
+  --accent: #5e6ad2;
+  --accent-hi: #7170ff;
+  --green: #10b981;
+  --amber: #d29922;
+  --red: #f2545b;
+
+  /* borders */
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.05);
+
+  --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+          "Microsoft YaHei", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--body);
+  background: var(--bg);
+  font: 15px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+header, .note, .grid, .panel {
+  width: min(1120px, calc(100% - 32px));
+  margin-left: auto;
+  margin-right: auto;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  padding-top: 32px;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--subtle);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+h1, h2 { margin: 0; font-weight: 590; color: var(--ink); }
+
+h1 { font-size: 28px; letter-spacing: -0.03em; }
+h2 { font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+
+.note, .hint { color: var(--muted); }
+
+.pill {
+  min-width: 148px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--body);
+}
+
+.pill.connected { color: var(--green); border-color: rgba(16, 185, 129, 0.35); }
+.pill.reconnecting, .pill.connecting { color: var(--amber); border-color: rgba(210, 153, 34, 0.35); }
+.pill.disconnected, .pill.stopped { color: var(--red); border-color: rgba(242, 84, 91, 0.35); }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+}
+
+article {
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+article span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+article strong {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 500;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.wide { grid-column: span 2; }
+
+.panel {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+button, input {
+  font: inherit;
+  color: var(--body);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+button {
+  padding: 7px 12px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+button:hover { background: rgba(255, 255, 255, 0.05); color: var(--ink); }
+button:active { background: rgba(255, 255, 255, 0.07); }
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+button.primary:hover { background: var(--accent-hi); border-color: var(--accent-hi); color: #ffffff; }
+
+input {
+  width: 92px;
+  padding: 6px 8px;
+  font-family: var(--mono);
+  color: var(--ink);
+}
+input:focus { outline: none; border-color: var(--accent-hi); }
+
+#log {
+  min-height: 160px;
+  margin: 12px 0 0;
+  padding-left: 22px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+#log li { margin: 4px 0; }
+#log li.bad { color: var(--red); }
+
+@media (max-width: 800px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wide { grid-column: span 2; }
+  header { align-items: flex-start; flex-direction: column; }
+}

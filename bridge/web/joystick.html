@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GEArm 远程操纵 · 干跑</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { overflow: auto; }
+    .app { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding-bottom: 24px; }
+    .gate { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+    .gate button { width: auto; padding: 10px 18px; font-size: 15px; }
+    .gate button.on { background: var(--green); color: #04120c; border-color: var(--green); }
+    .gate button.off { background: rgba(255, 255, 255, 0.02); }
+    #rmode { min-width: 150px; font-size: 14px; }
+    #rmode.enabled { color: var(--green); }
+    .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; margin-top: 14px; }
+    @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+    .panel { background: var(--panel); border: 1px solid var(--line-soft); padding: 14px; border-radius: 12px; }
+    .panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--subtle); margin: 0 0 10px; }
+    .pad { position: relative; width: 100%; aspect-ratio: 1; max-width: 240px; margin: 0 auto;
+           background: #0b0c0d; border: 1px solid var(--line); touch-action: none; user-select: none;
+           border-radius: 8px; }
+    .pad .cross { position: absolute; background: #23252a; }
+    .pad .cross.h { left: 0; right: 0; top: 50%; height: 1px; }
+    .pad .cross.v { top: 0; bottom: 0; left: 50%; width: 1px; }
+    .pad .ring { position: absolute; inset: 18%; border: 1px dashed #2e3138; border-radius: 50%; }
+    .knob { position: absolute; width: 34px; height: 34px; border-radius: 50%; background: var(--accent);
+            border: 3px solid #0f1011; box-shadow: 0 0 0 1px rgba(113,112,255,.5), 0 2px 10px rgba(0,0,0,.5);
+            transform: translate(-50%, -50%); }
+    .padlabel { text-align: center; font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .trig { display: flex; gap: 10px; margin-top: 10px; }
+    .trig > div { flex: 1; }
+    .trig input[type=range] { width: 100%; accent-color: var(--accent-hi); }
+    .trig span { font: 12px var(--mono); color: var(--muted); }
+    table.axes { width: 100%; border-collapse: collapse; font: 13px var(--mono); }
+    table.axes td { padding: 4px 6px; border-bottom: 1px solid var(--line-soft); }
+    table.axes td:first-child { color: var(--muted); width: 74px; }
+    table.axes tr.hl td { color: var(--green); }
+    .proto { font: 13px/1.5 var(--mono); background: #0b0c0d; border: 1px solid var(--line);
+             padding: 10px; min-height: 74px; word-break: break-all; border-radius: 8px; color: var(--body); }
+    .proto .dim { color: var(--subtle); }
+    .cmds { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+    .cmds button { font-size: 13px; }
+    .cmds button small { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; }
+    #log { font: 12px/1.5 var(--mono); max-height: 150px; overflow-y: auto; margin: 0; padding-left: 18px;
+           color: var(--muted); }
+    #log li.bad { color: var(--red); }
+    .linkbar { margin-top: 12px; font-size: 13px; }
+    .linkbar a { color: var(--accent-hi); }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <p class="eyebrow">GEArm · 远程操纵</p>
+      <h1>手柄控制台</h1>
+    </div>
+    <p id="rmode" class="pill">远程模式：未使能</p>
+  </header>
+
+  <p class="note">交互模型对齐原项目 <code>robot_joystick.py</code> 与 <code>robot_cmd.c</code>：
+    <code>remote_enable</code> 门控、6 轴映射到末端线速度/转速、10 Hz 流式下发。
+    速度上限 20 mm/s、转速上限 5 rpm，与原固件常量一致。</p>
+
+  <div class="gate">
+    <button id="enable" type="button" class="on">远程使能 remote_enable</button>
+    <button id="disable" type="button" class="off">远程禁用 remote_disable</button>
+    <span class="hint" id="gatehint">原固件：使能前会先软复位；禁用时同样先软复位。</span>
+  </div>
+
+  <div class="cols">
+    <section class="panel">
+      <h2>虚拟手柄</h2>
+      <div class="pad" id="pad-left">
+        <div class="cross h"></div><div class="cross v"></div><div class="ring"></div>
+        <div class="knob" id="knob-left"></div>
+      </div>
+      <p class="padlabel">左摇杆 → axis0 / axis1 → vx / vy</p>
+      <div class="pad" id="pad-right" style="margin-top:12px">
+        <div class="cross h"></div><div class="cross v"></div><div class="ring"></div>
+        <div class="knob" id="knob-right"></div>
+      </div>
+      <p class="padlabel">右摇杆 → axis3 / axis2 → rx / ry</p>
+      <div class="trig">
+        <div>
+          <label class="padlabel" style="text-align:left">axis4 扳机</label>
+          <input id="t4" type="range" min="-1" max="1" step="0.01" value="0">
+          <span id="t4v">0.00</span>
+        </div>
+        <div>
+          <label class="padlabel" style="text-align:left">axis5 扳机</label>
+          <input id="t5" type="range" min="-1" max="1" step="0.01" value="0">
+          <span id="t5v">0.00</span>
+        </div>
+      </div>
+      <p class="padlabel">vz = (axis4 − axis5) / 2 × 20 mm/s</p>
+    </section>
+
+    <section class="panel">
+      <h2>轴值与派生速度</h2>
+      <table class="axes" id="axestable"></table>
+      <h2 style="margin-top:14px">下发的文本行（10 Hz）</h2>
+      <div class="proto" id="proto"><span class="dim">远程模式未使能：原固件会忽略 remote_event。</span></div>
+      <p class="linkbar">三维视图：<a href="/viewer.html" target="_blank">/viewer.html</a>（URDF 实时模型）</p>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:14px">
+    <h2>命令（与原 robot_cmd.c 命令表一致）</h2>
+    <div class="cmds">
+      <button id="c-rel" type="button">rel_rotate<small>关节 角度</small></button>
+      <button id="c-auto" type="button">auto<small>x y z 末端定位</small></button>
+      <button id="c-soft" type="button">soft_reset<small>软复位至零位</small></button>
+      <button id="c-hard" type="button">hard_reset<small>硬复位至限位</small></button>
+      <button id="c-zero" type="button">zero<small>当前位置设零</small></button>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:14px">
+    <h2>日志</h2>
+    <ol id="log"></ol>
+  </section>
+</div>
+
+<script src="joystick.js"></script>
+</body>
+</html>
