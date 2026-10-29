@@ -309,6 +309,37 @@ class BridgeApiTest(unittest.TestCase):
             frame(pc.STOP, b""),
         ])
 
+    def test_estop_button_is_wired_on_every_page(self):
+        """急停按钮必须在所有页面可见，且 estop.js 已被静态路由注册。
+
+        漏一个页面 = 在那个页面工作时按不到急停，这是安全相关回归。
+        """
+        pages = ["index.html", "control.html", "joystick.html", "viewer.html"]
+        for page in pages:
+            html = (ROOT / "web" / page).read_text(encoding="utf8")
+            self.assertIn("estop.js", html, "%s 未引入 estop.js" % page)
+        # 路由表里必须能取到 estop.js，否则浏览器 404、按钮根本不执行
+        self.assertIn("/estop.js", sb._STATIC)
+        self.assertEqual(sb._STATIC["/estop.js"][1], "text/javascript; charset=utf-8")
+
+    def test_estop_button_issues_arm_command(self):
+        """点急停必须发出 arm/estop，且被桥接层接受后真正上线。"""
+        link = ScriptedDevice([])
+        self.start(lambda: link)
+        self.assertTrue(wait_until(lambda: self.status()["connection"] == "connected"))
+        code, body = self.post({"cmd": "arm", "arg": "estop"})
+        self.assertEqual(code, 200)
+        self.assertEqual(link.sent, [b"estop" + bytes((0x0D, 0x0A))])
+
+    def test_estop_clear_restores_motion(self):
+        """解除急停走 estop_clear，同样上线。"""
+        link = ScriptedDevice([])
+        self.start(lambda: link)
+        self.assertTrue(wait_until(lambda: self.status()["connection"] == "connected"))
+        code, body = self.post({"cmd": "arm", "arg": "estop_clear"})
+        self.assertEqual(code, 200)
+        self.assertEqual(link.sent, [b"estop_clear" + bytes((0x0D, 0x0A))])
+
     def test_motion_and_unknown_commands_are_rejected_and_not_sent(self):
         link = sb.LoopbackDeviceLink()
         self.start(lambda: link)

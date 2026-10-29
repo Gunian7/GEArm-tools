@@ -193,3 +193,89 @@ input:focus { outline: none; border-color: var(--accent-hi); }
   .wide { grid-column: span 2; }
   header { align-items: flex-start; flex-direction: column; }
 }
+
+/* ===================== 急停按钮 =====================
+ * 红色、大、和普通按钮明显区分。放在 header 里常驻可见；
+ * viewer.html 没有 header，用 .floating 固定到右上角。
+ * 激活态（急停中）用更深的红 + 脉冲，远看一眼能看出状态。 */
+.estop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.estop-btn {
+  background: var(--red);
+  border: 1px solid var(--red);
+  color: #ffffff;
+  font-weight: 650;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  padding: 10px 22px;
+  min-width: 96px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.06s;
+}
+
+.estop-btn:hover {
+  background: #ff6b72;
+  border-color: #ff6b72;
+  color: #ffffff;
+}
+
+.estop-btn:active {
+  transform: translateY(1px);
+  background: #d63f46;
+  border-color: #d63f46;
+}
+
+/* 急停中：明显的激活态，避免用户以为按钮没反应 */
+.estop-btn.active {
+  background: #7a1418;
+  border-color: #ff8a8f;
+  color: #ffd9db;
+  animation: estop-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes estop-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(242, 84, 91, 0.5); }
+  50%      { box-shadow: 0 0 0 6px rgba(242, 84, 91, 0); }
+}
+
+/* 解除按钮刻意做小做暗，和急停按钮拉开层级，防误触 */
+.estop-clear {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 10px;
+  width: auto;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.estop-clear:hover {
+  color: var(--body);
+  border-color: var(--subtle);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* 无 header 的页面（viewer.html）：固定右上角，始终可达 */
+.estop.floating {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 100;
+  background: rgba(15, 16, 17, 0.9);
+  backdrop-filter: blur(6px);
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+
+@media (max-width: 640px) {
+  .estop-btn { padding: 9px 16px; min-width: 80px; font-size: 14px; }
+  .estop-clear { font-size: 11px; padding: 5px 8px; }
+}
