@@ -36,6 +36,39 @@
     }).then(function (r) { return r.json(); });
   }
 
+  /* 轮询命令状态，直到板子的回显到达。
+     命令通道是异步的：POST 返回只说明桥接收下了，板子要到收到回显
+     "+OK <cmd>" 才算真确认。所以发完必须等 device_reply，
+     不能拿"发送成功"当时效证据。 */
+  function waitDeviceReply(timeoutMs) {
+    var deadline = Date.now() + (timeoutMs || 2500);
+    return new Promise(function (resolve) {
+      (function poll() {
+        fetch('/api/status').then(function (r) { return r.json(); }).then(function (st) {
+          var rows = st.commands || [];
+          for (var i = rows.length - 1; i >= 0; i--) {
+            if (rows[i].device_reply) { resolve(rows[i].device_reply); return; }
+          }
+          if (Date.now() > deadline) { resolve(null); return; }
+          setTimeout(poll, 120);
+        }).catch(function () { resolve(null); });
+      })();
+    });
+  }
+
+  /* 在按钮上显示一行临时反馈，让用户知道这一下到底成没成。 */
+  function flash(msg, kind) {
+    var el = document.getElementById('estop-feedback');
+    if (!el) { return; }
+    el.textContent = msg;
+    el.className = 'estop-feedback ' + (kind || '');
+    if (msg) {
+      setTimeout(function () {
+        if (el.textContent === msg) { el.textContent = ''; el.className = 'estop-feedback'; }
+      }, 4000);
+    }
+  }
+
   function build() {
     var wrap = document.createElement('div');
     wrap.className = 'estop';
@@ -57,6 +90,14 @@
 
     wrap.appendChild(btn);
     wrap.appendChild(clear);
+
+    /* 反馈行：显示"已发送/板子已确认/未送达"。没有它，用户按了急停
+       在机械臂不动的情况下完全看不出这一下起没起作用。 */
+    var fb = document.createElement('div');
+    fb.id = 'estop-feedback';
+    fb.className = 'estop-feedback';
+    wrap.appendChild(fb);
+
     return { wrap: wrap, btn: btn, clear: clear };
   }
 
@@ -81,14 +122,23 @@
     if (active()) { return; }          // 已在急停状态，不重复发送
     setActive(true);
     render(el, true);
+    flash('急停指令已发送，等待板子确认…', 'pending');
     post('arm', 'estop').then(function (res) {
       if (res && res.ok === false) {
         // 桥接层拒绝（例如未连接）。保留本地指示，让用户看到按钮有响应，
         // 但给出提示说明指令未必到达设备。
-        flash('急停指令被桥接拒绝：' + (res.error || '未知原因'));
+        flash('急停指令被桥接拒绝：' + (res.error || '未知原因'), 'bad');
+        return;
       }
+      return waitDeviceReply(2500).then(function (reply) {
+        if (reply) {
+          flash('板子已确认急停：' + reply, 'good');
+        } else {
+          flash('桥接已接收，但未收到板子回显（可能未连接或已掉线）', 'bad');
+        }
+      });
     }).catch(function () {
-      flash('桥接无响应，急停指令可能未送达');
+      flash('桥接无响应，急停指令可能未送达', 'bad');
     });
   }
 

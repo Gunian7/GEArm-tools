@@ -61,6 +61,12 @@ function commandLine(row) {
       detail += " type=" + hexByte(row.response.type) + " code=" + row.response.code;
     }
   }
+  if (row.device_reply) {
+    /* 板子亲口回了 "+OK <命令>"，说明指令真的到达并被收下了。
+       这是用户在机械臂不动时唯一能确认"急停确实生效了"的依据，
+       所以单独标出来，不要混在普通的 state 里。 */
+    detail += " 板子已确认: " + row.device_reply;
+  }
   if (row.error) {
     detail += " " + row.error;
   }

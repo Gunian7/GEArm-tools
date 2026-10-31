@@ -340,6 +340,106 @@ class BridgeApiTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(link.sent, [b"estop_clear" + bytes((0x0D, 0x0A))])
 
+    def test_device_echo_is_split_from_binary_frames(self):
+        """固件的 "+OK <cmd>" 回显必须被识别为文本，不能喂给帧解析器。
+
+        喂进去的后果：解析器把它当坏帧刷 warning，真实响应被淹掉，
+        用户在 Web 上永远看不到"板子确认了"。
+        """
+        text, binary = sb._split_text_lines(b"+OK estop\r\n")
+        self.assertEqual(text, ["+OK estop"])
+        self.assertEqual(binary, b"")
+
+        # 多条回显一次到达
+        text, binary = sb._split_text_lines(b"+OK rel_rotate 0 5\r\n+OK estop\r\n")
+        self.assertEqual(text, ["+OK rel_rotate 0 5", "+OK estop"])
+
+        # 二进制帧不能被误判成文本（含非打印字节）
+        frame = bytes((0xA5, 0x04, 0x01, 0x02, 0x03, 0x04))
+        text, binary = sb._split_text_lines(frame)
+        self.assertEqual(text, [])
+        self.assertEqual(binary, frame)
+
+        # 空数据
+        self.assertEqual(sb._split_text_lines(b""), ([], b""))
+
+    def test_device_echo_marks_command_acked(self):
+        """发一条 arm 命令后，设备回显必须把该命令标成 acked 并带上回显内容。
+
+        用 ScriptedDevice 的 script 机制让设备在收到命令的瞬间自动回灌回显 ——
+        这正是真实固件的行为。不能先用 post() 再手动 push：post() 会阻塞到
+        1.2s 命令超时，等它返回时命令已经是 timeout 态，回显再也关联不上。
+        """
+        link = ScriptedDevice([b"+OK estop\r\n"])
+        self.start(lambda: link)
+        self.assertTrue(wait_until(lambda: self.status()["connection"] == "connected"))
+
+        code, body = self.post({"cmd": "arm", "arg": "estop"})
+        self.assertEqual(code, 200)
+
+        cmds = [c for c in self.status()["commands"] if c["cmd"] == "arm"]
+        self.assertTrue(cmds, "arm 命令应出现在命令列表")
+        last = cmds[-1]
+        self.assertEqual(last["device_reply"], "+OK estop")
+        self.assertEqual(last["state"], "acked")
+        self.assertIsNone(last["error"])
+
+    def test_consecutive_commands_all_get_echo(self):
+        """连续发多条命令，每一条都必须收到回显。
+
+        这是回归测试：_on_device_line() 里曾经在持有 self.lock 的情况下
+        调用 _pump_send()，而 threading.Lock 不可重入，直接死锁读取线程。
+        症状很隐蔽——第一条命令能正常 acked，之后所有命令永远卡在 queued，
+        Web 上看起来"能连上、第一条也成功了"，但再点任何按钮都没反应。
+        """
+        replies = [b"+OK estop\r\n", b"+OK estop_clear\r\n", b"+OK zero\r\n"]
+        link = ScriptedDevice(replies)
+        self.start(lambda: link)
+        self.assertTrue(wait_until(lambda: self.status()["connection"] == "connected"))
+
+        for i, arg in enumerate(("estop", "estop_clear", "zero")):
+            code, body = self.post({"cmd": "arm", "arg": arg})
+            self.assertEqual(code, 200, "第 %d 条命令应被接受" % (i + 1))
+
+        # 三条命令都必须 acked 且各自带上自己的回显
+        self.assertTrue(wait_until(
+            lambda: len([c for c in self.status()["commands"]
+                         if c["cmd"] == "arm" and c.get("device_reply")]) == 3,
+            timeout=10.0,
+        ), "三条命令都应收到回显，实际: %s" % self.status()["commands"])
+
+        cmds = [c for c in self.status()["commands"] if c["cmd"] == "arm"]
+        self.assertEqual(len(cmds), 3)
+        for c in cmds:
+            self.assertEqual(c["state"], "acked")
+        self.assertEqual([c["device_reply"] for c in cmds],
+                         ["+OK estop", "+OK estop_clear", "+OK zero"])
+        # 队列必须排空，不能有残留
+        self.assertFalse([c for c in cmds if c["state"] == "queued"],
+                         "不应有命令卡在 queued")
+
+    def test_arm_command_without_echo_times_out(self):
+        """没有回显时命令必须走超时，不能被文本路由误判成已确认。"""
+        link = ScriptedDevice([])
+        self.start(lambda: link)
+        self.assertTrue(wait_until(lambda: self.status()["connection"] == "connected"))
+        code, body = self.post({"cmd": "arm", "arg": "estop"})
+        self.assertEqual(code, 200)
+        cmds = [c for c in self.status()["commands"] if c["cmd"] == "arm"]
+        self.assertEqual(cmds[-1]["state"], "timeout")
+        self.assertIsNone(cmds[-1]["device_reply"])
+
+    def test_device_lines_surface_in_status(self):
+        """回显行要进 status()，让 Web 刷新后也能看到。"""
+        link = ScriptedDevice([])
+        self.start(lambda: link)
+        self.assertTrue(wait_until(lambda: self.status()["connection"] == "connected"))
+        link.push(b"+OK zero\r\n")
+        self.assertTrue(wait_until(
+            lambda: "+OK zero" in self.status().get("device_lines", []),
+            timeout=5.0,
+        ))
+
     def test_motion_and_unknown_commands_are_rejected_and_not_sent(self):
         link = sb.LoopbackDeviceLink()
         self.start(lambda: link)

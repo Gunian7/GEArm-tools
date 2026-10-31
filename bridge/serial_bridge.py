@@ -43,6 +43,26 @@ ARM_TEXT_MARKER = b"\x00"
 TERMINAL = {"acked", "device_error", "timeout", "transport_lost", "cancelled"}
 
 
+def _split_text_lines(data: bytes):
+    """把设备回传数据拆成 (文本行列表, 剩余二进制字节)。
+
+    GEArm 固件是纯文本协议，收到命令后回显一行 "+OK <命令>"。
+    桥接的帧解析器只认二进制帧（帧头 0xA5），文本回显会被当成坏帧。
+    这里按"可打印 ASCII 或以 CR/LF 分隔"把文本行摘出来，
+    剩余字节原样交给帧解析器——两条协议互不干扰。
+
+    判定标准：整段数据全部由可打印 ASCII + CR/LF/TAB 组成即视为文本。
+    二进制帧里含大量非打印字节，不会被误判。
+    """
+    if not data:
+        return [], b""
+    if all(b in (0x09, 0x0A, 0x0D) or 0x20 <= b <= 0x7E for b in data):
+        text = data.decode("ascii", "replace")
+        lines = [ln.strip() for ln in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+        return [ln for ln in lines if ln], b""
+    return [], data
+
+
 def wire_payload(blob: bytes) -> bytes:
     """Strip the bridge-internal text marker so only real wire bytes remain.
 
@@ -521,6 +541,7 @@ class Bridge:
         self.last_error = None
         self.telemetry = None
         self.commands = []
+        self.device_lines = []
         self.queue = []
         self.inflight = None
         self.rejections = []
@@ -570,6 +591,7 @@ class Bridge:
                 "last_error": self.last_error,
                 "telemetry": None if self.telemetry is None else dict(self.telemetry),
                 "commands": [self._public(item) for item in self.commands[-50:]],
+                "device_lines": list(self.device_lines[-50:]),
                 "rejections": [dict(item) for item in self.rejections[-50:]],
             }
 
@@ -711,6 +733,7 @@ class Bridge:
             "state": item["state"],
             "response": item["response"],
             "error": item["error"],
+            "device_reply": item.get("device_reply"),
         }
 
     def _set_connection(self, state) -> None:
@@ -819,11 +842,45 @@ class Bridge:
         self._broadcast({"kind": "command", "command": public})
 
     def _on_bytes(self, data: bytes) -> None:
-        frames, errors = self.parser.feed(data)
-        for code in errors:
-            log.warning("rejected device frame code=%s", code)
-        for frame in frames:
-            self._on_frame(frame)
+        # GEArm 固件走的是文本命令协议，收到命令后会回显一行 "+OK <命令>"
+        # （以 CR LF 结尾）。这段回显不是二进制帧（帧头是 0xA5），直接喂给
+        # 这段回显不是二进制帧（帧头是 0xA5），直接喂给解析器会被当成坏帧
+        # 刷一堆 warning，把真实响应淹掉。所以先按可打印 ASCII 把文本行摘出来，
+        # 剩下的才交给帧解析器。
+        text, binary = _split_text_lines(data)
+        for line in text:
+            self._on_device_line(line)
+        if binary:
+            frames, errors = self.parser.feed(binary)
+            for code in errors:
+                log.warning("rejected device frame code=%s", code)
+            for frame in frames:
+                self._on_frame(frame)
+
+    def _on_device_line(self, line: str) -> None:
+        """设备回显的文本行：转发给等待中的命令，并推给 Web。"""
+        with self.lock:
+            self.device_lines.append(line)
+            del self.device_lines[:-50]
+            connection = self.connection
+        self._broadcast({"kind": "device_line", "connection": connection, "line": line})
+        # 把回显关联到正在等待的命令上，让 Web 能看到"这条命令被板子确认了"
+        with self.lock:
+            inflight = self.inflight
+            public = None
+            if inflight is not None and inflight["state"] == "sent":
+                inflight["device_reply"] = line
+                inflight["state"] = "acked"
+                inflight["error"] = None
+                inflight["event"].set()
+                public = self._public(inflight)
+                self.inflight = None
+        # _pump_send() 必须放在锁外面：它自己会取同一把 self.lock，
+        # 而 threading.Lock 不可重入，在锁内调用会直接把读取线程死锁住
+        # （症状是第一条命令能 acked，之后所有命令永远卡在 queued）。
+        self._pump_send()
+        if public is not None:
+            self._broadcast({"kind": "command", "command": public})
 
     def _on_frame(self, frame) -> None:
         typ = frame["type"]
