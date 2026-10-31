@@ -300,3 +300,32 @@ input:focus { outline: none; border-color: var(--accent-hi); }
 /* header 里放反馈行时要竖排，否则会把标题挤走 */
 header .estop { flex-direction: column; align-items: flex-end; gap: 6px; }
 header .estop-feedback { text-align: right; }
+
+/* ===================== 实机控制台 =====================
+ * viewer.html 从"干跑视图"改为唯一控制台后的增量样式。 */
+
+/* 侧栏急停按钮：红色，和 header 里那个大按钮同一语义但尺寸适配侧栏 */
+button.danger-btn {
+  background: var(--red);
+  border: 1px solid var(--red);
+  color: #ffffff;
+  font-weight: 650;
+}
+
+button.danger-btn:hover {
+  background: #ff6b72;
+  border-color: #ff6b72;
+  color: #ffffff;
+}
+
+button.danger-btn:active {
+  background: #d63f46;
+  border-color: #d63f46;
+}
+
+/* 实机模式指示：HUD 里的 pill 用醒目的边色，和干跑一眼区分开 */
+.pill.live {
+  border-color: rgba(242, 84, 91, 0.55);
+  background: rgba(242, 84, 91, 0.14);
+  color: #ffd9db;
+}

@@ -309,18 +309,33 @@ class BridgeApiTest(unittest.TestCase):
             frame(pc.STOP, b""),
         ])
 
-    def test_estop_button_is_wired_on_every_page(self):
-        """急停按钮必须在所有页面可见，且 estop.js 已被静态路由注册。
+    def test_estop_button_is_wired_on_the_console(self):
+        """急停按钮必须在控制台上可见，且 estop.js 已被静态路由注册。
 
-        漏一个页面 = 在那个页面工作时按不到急停，这是安全相关回归。
+        控制台现在只有一个页面（viewer.html），其他页面已作为冗余移除。
+        漏掉 estop.js = 按钮根本不执行，这是安全相关回归。
         """
-        pages = ["index.html", "control.html", "joystick.html", "viewer.html"]
-        for page in pages:
-            html = (ROOT / "web" / page).read_text(encoding="utf8")
-            self.assertIn("estop.js", html, "%s 未引入 estop.js" % page)
+        html = (ROOT / "web" / "viewer.html").read_text(encoding="utf8")
+        self.assertIn("estop.js", html, "viewer.html 未引入 estop.js")
         # 路由表里必须能取到 estop.js，否则浏览器 404、按钮根本不执行
         self.assertIn("/estop.js", sb._STATIC)
         self.assertEqual(sb._STATIC["/estop.js"][1], "text/javascript; charset=utf-8")
+
+    def test_root_path_serves_the_console(self):
+        """根路径必须指向唯一的控制台，且已删页面不再被路由。"""
+        self.assertEqual(sb._STATIC["/"][0], "viewer.html")
+        for gone in ("/index.html", "/app.js", "/control.html", "/control.js",
+                     "/joystick.html", "/joystick.js"):
+            self.assertNotIn(gone, sb._STATIC, "%s 应已随冗余页面移除" % gone)
+
+    def test_console_has_estop_and_mode_controls(self):
+        """控制台必须带实机/干跑切换和侧栏急停入口。"""
+        html = (ROOT / "web" / "viewer.html").read_text(encoding="utf8")
+        for needle in ("mode-toggle", "estop-quick", "last-reply", "conn"):
+            self.assertIn('id="%s"' % needle, html, "viewer.html 缺少 #%s" % needle)
+        js = (ROOT / "web" / "viewer.js").read_text(encoding="utf8")
+        self.assertIn("function setRealMode", js)
+        self.assertIn("rel_rotate ", js, "控制台必须真实下发 rel_rotate")
 
     def test_estop_button_issues_arm_command(self):
         """点急停必须发出 arm/estop，且被桥接层接受后真正上线。"""
@@ -765,30 +780,40 @@ class BridgeApiTest(unittest.TestCase):
             server.close()
 
     def test_static_page_has_local_bridge_only(self):
+        """控制台页面与资源必须全部本地化：无 CDN、无外链、只走桥接自身 API。"""
         link = sb.LoopbackDeviceLink()
         self.start(lambda: link)
         status, html = http_text(self.base + "/")
         self.assertEqual(status, 200)
-        _, js = http_text(self.base + "/app.js")
+        # 根路径现在就是唯一的控制台
+        self.assertIn("viewer.js", html)
+        self.assertIn("estop.js", html)
+        _, js = http_text(self.base + "/viewer.js")
+        _, estop = http_text(self.base + "/estop.js")
         _, css = http_text(self.base + "/style.css")
-        for text in (html, js, css):
+        for text in (html, js, estop, css):
             lowered = text.lower()
             self.assertNotIn("http://", lowered)
             self.assertNotIn("https://", lowered)
             self.assertNotIn("cdn", lowered)
-        self.assertIn("app.js", html)
         self.assertIn("style.css", html)
-        self.assertIn("/api/status", js)
+        # 指令必须走桥接自身的 /api/command，不能有第三个出口
         self.assertIn("/api/command", js)
-        self.assertIn("/ws", js)
+        self.assertIn("/api/command", estop)
+        self.assertIn("/api/status", js)
         self.assertNotIn("45111", js)
         self.assertNotIn("COM", js)
-        for needle in ("心跳", "init_stage", "Ping", "版本", "电压", "状态", "遥测", "Stop"):
+        # 控制台必须自带这些关键 UI 与能力（防回归：别又把干跑当成唯一模式）
+        for needle in ("关节", "求解 IK", "急停", "rel_rotate", "setRealMode",
+                       "mode-toggle", "estop-btn", "device_reply"):
             self.assertIn(needle, html + js)
-        disk_html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
-        disk_js = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
-        self.assertNotIn("http://", disk_html.lower())
-        self.assertNotIn("https://", disk_js.lower())
+        # 磁盘上的文件也必须干净（防有人改完服务没同步磁盘）
+        disk_html = (ROOT / "web" / "viewer.html").read_text(encoding="utf-8")
+        disk_js = (ROOT / "web" / "viewer.js").read_text(encoding="utf-8")
+        disk_estop = (ROOT / "web" / "estop.js").read_text(encoding="utf-8")
+        for text in (disk_html, disk_js, disk_estop):
+            self.assertNotIn("http://", text.lower())
+            self.assertNotIn("https://", text.lower())
 
 
 if __name__ == "__main__":

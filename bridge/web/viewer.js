@@ -23,6 +23,93 @@ let stepDeg = 1;
 let jogSpeed = 10;      // deg/s, ROBOT_JOINT_DEFAULT_VELOCITY
 let speedPercent = 100;
 
+/* ---------------------------------------------------------------------------
+ * 实机控制
+ *
+ * 这个页面就是唯一的控制台。realMode 打开时，画面里的关节角会真实下发给固件；
+ * 关闭时退回干跑（只驱动 3D 模型），用于验证 IK 或调试界面，不碰设备。
+ *
+ * 命令用 rel_rotate <关节号> <增量>，不用 auto <x> <y> <z>：
+ * 页面的坐标系是"绿轴 Y 朝上"的屏幕坐标系，而固件 robot_auto_handle() 吃的是
+ * 机器人基坐标系（Z 朝上）。两者的原点和轴向对应关系没有在实物上标定过，
+ * 直接发 auto 有让机械臂朝意外方向猛冲的风险。改用关节增量则完全绕开这个问题 ——
+ * IK 在页面上解出 6 个关节角，我们只告诉固件"每个关节转多少度"。
+ *
+ * 下发节奏固定 100ms 一拍（与原版 robot_joystick.py 的 10Hz 一致）：
+ * 拖动滑块会连续触发 input 事件，每个事件发一条会把桥接队列灌满，
+ * 而且固件持有的是"最后一份指令"，发太快没有意义。定尺 flush 同时保证
+ * 松手后一定会补发归零帧——那是明确的"停"。
+ * ------------------------------------------------------------------------- */
+let realMode = true;
+let lastSent = [0, 0, 0, 0, 0, 0];   // 固件当前持有的关节角，用于算增量
+
+function sendArm(text) {
+  fetch('/api/command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cmd: 'arm', arg: text })
+  }).then((r) => r.json()).then((res) => {
+    if (res && res.ok === false) {
+      note('拒绝 ' + text + '：' + (res.error || '未知原因'), true);
+      return;
+    }
+    note('已发送 ' + text + '，等待板子确认…');
+    waitReply(text, 2500);
+  }).catch(() => note('桥接无响应：' + text, true));
+}
+
+/* 等板子回显 "+OK <命令>"。拿不到就明确说没收到——
+   "发送成功"只说明桥接收下了，机械臂不动时这两件事看起来一模一样。 */
+function waitReply(text, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  (function poll() {
+    fetch('/api/status').then((r) => r.json()).then((s) => {
+      const rows = s.commands || [];
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (rows[i].arg === text && rows[i].device_reply) {
+          note('板子已确认 ' + text + ' → ' + rows[i].device_reply);
+          return;
+        }
+      }
+      if (Date.now() > deadline) {
+        note('未收到板子回显：' + text + '（检查 USB 连接）', true);
+        return;
+      }
+      setTimeout(poll, 120);
+    }).catch(() => {});
+  })();
+}
+
+/* 100ms 定尺：把画面关节角与固件持有值之间的差，按关节增量发出去。
+   回放期间必须锁住——replayShowFrame() 会直接覆写 joints[]，
+   不锁的话"播放一段录制"就会驱动真实机械臂，那是完全不该发生的事。 */
+let replaying = false;
+setInterval(() => {
+  if (!realMode || replaying) return;
+  for (let i = 0; i < JOINTS; i++) {
+    const delta = joints[i] - lastSent[i];
+    if (Math.abs(delta) < 1e-4) continue;
+    lastSent[i] = joints[i];
+    sendArm('rel_rotate ' + i + ' ' + (Math.round(delta * 100) / 100));
+  }
+}, 100);
+
+function setRealMode(on) {
+  realMode = on;
+  const pill = $('pill-mode');
+  if (pill) {
+    pill.textContent = on ? '实机控制 · 指令真实下发' : '干跑 · 不发送运动命令';
+    pill.className = 'pill' + (on ? ' live' : '');
+  }
+  const btn = $('mode-toggle');
+  if (btn) btn.textContent = on ? '切换到干跑' : '切换到实机';
+  const banner = $('mode-banner');
+  if (banner) banner.hidden = on;
+  /* 切回实机时以当前画面角为基准重新对齐，避免把切换期间的位移一次性补发 */
+  if (on) { lastSent = joints.slice(); }
+  note(on ? '已切换到实机控制：关节变动会真实下发' : '已切换到干跑：只驱动模型，不发指令');
+}
+
 function note(text, bad) {
   const li = document.createElement('li');
   li.textContent = text;
@@ -496,6 +583,13 @@ $('view-top').addEventListener('click', () => setView('top'));
 function pollStatus() {
   fetch('/api/status').then((r) => r.json()).then((s) => {
     $('conn').textContent = s.connection;
+    const rows = s.commands || [];
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].device_reply) {
+        $('last-reply').textContent = rows[i].device_reply;
+        break;
+      }
+    }
   }).catch(() => {});
 }
 
@@ -668,6 +762,7 @@ async function replayRefreshList() {
 
 function replayStop() {
   if (replay.timer !== null) { clearTimeout(replay.timer); replay.timer = null; }
+  replaying = false;
   $('replay-play').textContent = '播放';
 }
 
@@ -704,8 +799,9 @@ $('replay-play').addEventListener('click', async () => {
     replay.frames = data.frames;
     replay.index = parseInt(value, 10);
     replay.i = 0;
+    replaying = true;          // 锁住指令下发：回放只驱动画面
     $('replay-play').textContent = '暂停';
-    note('开始回放 episode ' + replay.index + '（' + data.frames.length + ' 帧）');
+    note('开始回放 episode ' + replay.index + '（' + data.frames.length + ' 帧，仅驱动画面，不发指令）');
     replayTick();
   } catch (e) { note('回放异常 ' + e, true); }
 });
@@ -721,6 +817,17 @@ setInterval(replayRefreshList, 5000);
 /* ---------- boot ---------- */
 buildControls();
 buildSpeed();
+
+/* 实机/干跑切换 + 侧栏急停。
+   急停复用 estop.js 的逻辑：直接点页面上的红色大按钮效果相同，
+   这里只是给侧栏一个顺手的位置。 */
+$('mode-toggle').addEventListener('click', () => setRealMode(!realMode));
+$('estop-quick').addEventListener('click', () => {
+  const btn = document.getElementById('estop-btn');
+  if (btn) btn.click();
+});
+setRealMode(true);
+
 pollStatus();
 loadJointLimits();
 setInterval(pollStatus, 2000);

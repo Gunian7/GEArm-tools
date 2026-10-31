@@ -49,7 +49,7 @@ OPEN_COUNT = 0
 ARM_CMDS = {
     "rel_rotate", "auto", "hard_reset", "soft_reset", "zero",
     "estop", "estop_clear",
-    "remote_enable", "remote_disable",
+    "remote_enable", "remote_disable", "remote_event",
 }
 ARM_MAX_LEN = 96          # 固件 USB 接收缓冲 128 字节，留足余量
 ARM_TERMINATOR = bytes((0x0D, 0x0A))  # CR+LF：固件认 0x0A 结束、忽略 0x0D

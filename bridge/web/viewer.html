@@ -70,12 +70,22 @@
   <aside class="side">
     <div>
       <p class="eyebrow">GEArm · 三维操纵</p>
-      <h1 style="font-size:21px">URDF 实时视图</h1>
+      <h1 style="font-size:21px">URDF 实时控制台</h1>
     </div>
-    <p class="mode"><strong>干跑模式（虚拟设备）。</strong>画面几何即运动学：
-       FK 直接读自 URDF 场景链，IK 在同一链上数值求解，坐标帧与末端同源。
-       坐标已转为屏幕坐标系（<strong>绿轴 Y 朝上</strong>，读数与所见一致）。
-       <strong>不发送任何运动命令</strong>。</p>
+    <p class="mode" id="mode-banner" hidden><strong>实机控制模式。</strong>画面几何即运动学：
+      FK 直接读自 URDF 场景链，IK 在同一链上数值求解，坐标帧与末端同源。
+      坐标已转为屏幕坐标系（<strong>绿轴 Y 朝上</strong>，读数与所见一致）。
+      <strong>关节变动会真实下发给固件</strong>（rel_rotate 增量，100ms 一拍）。</p>
+
+    <div class="btns" style="grid-template-columns:1fr 1fr">
+      <button id="mode-toggle" type="button">切换到干跑</button>
+      <button id="estop-quick" type="button" class="danger-btn">急停</button>
+    </div>
+    <p class="hintbox">右上角红色大按钮和键盘 <strong>Esc</strong> 同样是急停。
+      急停会立即停止全部 6 轴并阻断后续动作，需点"解除急停"才恢复。</p>
+
+    <div class="kv"><span>设备连接</span><strong id="conn">-</strong></div>
+    <div class="kv"><span>最近回显</span><strong id="last-reply">-</strong></div>
 
     <div>
       <h2>关节（度）· 加减步进</h2>
@@ -119,9 +129,10 @@
         <div class="kv"><span>episode</span><strong id="rec-index">-</strong></div>
         <p class="hintbox">动作空间＝6 关节角；观测＝6 关节角＋TCP  XYZ；标称 50Hz。
           超出 URDF 关节限位的帧会被拒绝。连续录到 3000 帧（约 60 秒）自动停止。</p>
-        <p class="warnbox" id="rec-warn">注意：当前是<strong>干跑数据</strong>——观测取自页面滑块，
-          不是从设备读回的关节角。接入硬件后必须改为「指令＝发给固件的命令，
-          观测＝固件回报的角度」，否则训练出来的策略无法迁移到实物。</p>
+        <p class="warnbox" id="rec-warn">注意：当前录制的<strong>动作是发给固件的真实指令</strong>，
+          但观测取自页面滑块，不是从设备读回的关节角。要让训练出的策略能迁移到实物，
+          必须改为「指令＝发给固件的命令，观测＝固件回报的角度」——那需要固件提供
+          关节角上报（Emm_V5_Read_Sys_Params 已经在 robot.c 里调用过，可以做成遥测）。</p>
         <div class="btns">
           <button id="rec-verify" type="button">校验最近一集</button>
         </div>
@@ -159,7 +170,6 @@
       <div class="kv"><span>X</span><strong id="tcp-x">-</strong></div>
       <div class="kv"><span>Y</span><strong id="tcp-y">-</strong></div>
       <div class="kv"><span>Z</span><strong id="tcp-z">-</strong></div>
-      <div class="kv"><span>连接</span><strong id="conn">-</strong></div>
       <div class="kv"><span>帧率</span><strong id="fps">-</strong></div>
     </div>
 
