@@ -1,9 +1,0 @@
-device STM32H723VG
-si SWD
-speed 4000
-connect
-h
-mem32 0x2400038C 8
-mem32 0x24000354 8
-go
-exit
