@@ -36,37 +36,50 @@ C:\Users\ASUS\AppData\Local\Programs\Python\Python313\python.exe test_bridge_api
 `POST /api/command`
 
 ```json
-{"cmd": "ping"}
-{"cmd": "query", "arg": 0}
-{"cmd": "rate", "arg": 10}
-{"cmd": "stop", "wait": false}
+{"cmd": "arm", "arg": "rel_rotate 0 5"}
+{"cmd": "arm", "arg": "jstat"}
+{"cmd": "arm", "arg": "estop"}
 ```
 
-- `ping`：无参数。
-- `query`：`arg` 为 0 版本、1 电压、2 状态。
-- `rate`：`arg` 为 1..100，单位 Hz。
-- `stop`：无参数。这是遥测停止 `0x04`，不是电机急停 `0xFE`。
-- 只允许字段 `cmd`、`arg`、`wait`。`wait` 缺省为 true，会等待设备响应或超时。
+- **`arm`**：唯一会把字节发给设备的命令。`arg` 是一行文本，由 `pc_service.build_arm_command()`
+  按 `ARM_CMDS` 白名单校验后才变成字节。当前白名单：
+  `auto, estop, estop_clear, hard_reset, jstat, probe, qstat, rel_rotate,
+  remote_disable, remote_enable, remote_event, soft_reset, zero`。
+  **新增命令必须同时改固件 `robot_cmd.c` 的 `robot_uart1_cmd_table` 和 `pc_service.py` 的
+  `ARM_CMDS`**，否则这里以 400 拒绝。
+- 只允许字段 `cmd`、`arg`。`wait` 缺省为 true，会等待设备响应或超时。
 
 成功为 200，例如：
 
 ```json
-{"ok": true, "seq": 1, "cmd": "ping", "arg": null, "state": "acked", "response": {"kind": "pong"}, "error": null}
+{"ok": true, "seq": 1, "cmd": "arm", "arg": "jstat", "state": "acked", "response": {"kind": "lines"}, "error": null}
 ```
 
 `state`：`queued`、`sent`、`acked`、`device_error`、`timeout`、`transport_lost`、`cancelled`。
 
-序号从 1 递增。同一时刻只向设备发出一条未完成命令。PONG 对应 ping；ACK 和 ERROR 的第一个载荷字节对应 query、rate、stop。响应写回该序号的 `response`。
+序号从 1 递增。同一时刻只向设备发出一条未完成命令。响应写回该序号的 `response`。
 
 白名单外、非法参数或多余字段返回 400：
 
 ```json
-{"ok": false, "error": "rejected", "cmd": "enable"}
+{"ok": false, "error": "rejected", "cmd": "arm", "arg": "reboot"}
 ```
 
 同时写日志 `rejected command`。这些请求不会变成字节，也不会发给设备。
 
-`GET /`、`/app.js`、`/style.css` 是本地静态页，没有构建步骤。
+其它只读端点（都不碰设备、不产生运动）：
+
+| 端点 | 用途 |
+|---|---|
+| `GET /api/status` | 连接状态、遥测、命令与拒绝计数 |
+| `GET /api/model` | URDF 链与各关节行程范围，供 viewer 画限位 |
+| `POST /api/kinematics` | FK/IK，纯计算，无设备访问 |
+| `GET /api/episodes` | 已录制的 episode 列表 |
+| `POST /api/episode/<action>` | 录制 / 停止 / 回放，`action` 为 `start`/`stop`/`load` |
+| `GET /api/episode/frames` | 某个 episode 的逐帧数据 |
+
+`GET /`、`/viewer.html`、`/viewer.js`、`/estop.js`、`/style.css`、`/vendor/three.module.js`
+及 `vendor/addons/` 下两个加载器是本地静态页，没有构建步骤，不连 CDN。
 
 `WS /ws` 推送 JSON，`kind` 为 `status`、`telemetry` 或 `command`。
 
@@ -76,16 +89,25 @@ C:\Users\ASUS\AppData\Local\Programs\Python\Python313\python.exe test_bridge_api
 
 - 只监听 `127.0.0.1`。传入 `0.0.0.0` 会在绑定前拒绝。
 - 不烧录，不复位，不运行 JLink。唯一的外部动作是打开板子的 USB CDC COM 口。
-- 命令只有 ping、query、rate、stop。运动、使能、速度、位置、回零、写参数在桥接层拒绝。
-- 组帧和解析复用上级目录 `pc_service.py` 的 `Parser`、`unpack_telemetry`、`crc8`、`build_frame`，没有另写一份协议。
-- `pc_service.TX_WHITELIST` 只有 PING 和 QUERY。桥接在锁内临时把 RATE 或 STOP 加入该集合后调用 `build_frame`，`finally` 恢复原集合。运动类型不会被加入。
+- 发往设备的命令只有 `arm` 一种，且 `arg` 必须通过 `pc_service.build_arm_command()`
+  的 `ARM_CMDS` 白名单校验。运动、急停等真实动作由**固件侧**的软件限位、
+  `robot_can_is_present()` 总线门禁和急停命令负责，桥接层不做二次判断。
+- 组帧和解析复用上级目录 `pc_service.py` 的 `crc8`、`build_frame`、`Parser`，
+  没有另写一份协议。`build_frame` 只接受 `TX_WHITELIST`（PING/QUERY），
+  `arm` 走的是 `build_arm_command()` 这条独立路径，不经过 `TX_WHITELIST`。
 - 页面只请求当前主机的 `/api` 和 `/ws`，没有 CDN，不直连设备。
-- 同一时刻只有一个 `DeviceLink`。`UsbCdcDeviceLink` 只开板子的 USB CDC 口；`TcpDeviceLink` 只连接 `127.0.0.1`。测试注入 `LoopbackDeviceLink`。
+- 同一时刻只有一个 `DeviceLink`。`UsbCdcDeviceLink` 只开板子的 USB CDC 口；
+  `TcpDeviceLink` 只连接 `127.0.0.1`；测试注入 `LoopbackDeviceLink`。
 - `plan_runtime()` 是纯规划，不会打开端口；端口只在桥接线程里由 `DeviceLink` 工厂打开。
 
-## 未验证
+## 验证状态
 
-- 真实设备实测（插回 USB 后跑 `hw_probe.py` 或 `python ../pc_service.py`）
+**已验证**
+- 26 个 API 测试全过（`python -m unittest test_bridge_api`），无串口、无硬件依赖
+- 真实链路已打通：Web 发 `rel_rotate` 能驱动电机，`g_dbg_can_tx_ok` 随命令增长
+- 只读诊断 `jstat` / `qstat` / `probe` 可安全反复调用
+
+**未验证 / 阻塞**
+- USB CDC **只发不收**：设备枚举正常，但 PC→板子的 `WriteFile` 失败。
+  已排除非线、非 bridge 逻辑、非缓冲区、非 GPIO 顺序，需示波器看 D+/D- 物理信号。
 - 浏览器实测由经理集成测试负责
-
-自动化测试没有打开 COM 口，也没有跑浏览器。WebSocket 只用脚本客户端验证过。USB 设备未插时桥接会一直重试，这不代表设备可用。
