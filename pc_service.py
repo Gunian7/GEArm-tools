@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage-0 GEArm telemetry reader over the board's USB CDC virtual COM port.
+"""Stage-0 GEArm telemetry reader over the board's USB CDC virtual serial port.
 
 The board (DM-MC02 / STM32H723) exposes a USB CDC device (VID 0483, PID 5740)
 that the host turns into a virtual serial port: "COM10" on Windows (usbser),
@@ -537,7 +537,7 @@ def open_port(name: str):
     if not kernel32.GetCommState(handle, ctypes.byref(dcb)):
         kernel32.CloseHandle(handle)
         raise OSError("GetCommState failed")
-    # The baud rate below is meaningless for a USB CDC virtual COM port (the
+    # The baud rate below is meaningless for a USB CDC virtual serial port (the
     # firmware ignores it); it is kept so the same path still works for the
     # CH340/USART1 fallback link.
     if not kernel32.BuildCommDCBW("baud=115200 parity=N data=8 stop=1", ctypes.byref(dcb)):

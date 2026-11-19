@@ -284,7 +284,7 @@ class TcpDeviceLink(DeviceLink):
 
 
 class UsbCdcDeviceLink(DeviceLink):
-    """Real device link over the board's USB CDC virtual COM port.
+    """Real device link over the board's USB CDC virtual serial port.
 
     The board enumerates as VID 0483 / PID 5740 (usbser on Windows, cdc_acm on
     Linux), which the host exposes as a serial port: "COM10" on Windows,
