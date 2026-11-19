@@ -1,27 +1,62 @@
 # GEArm 设备桥接（USB CDC）
 
-软件侧链路。桥接进程持有设备连接，网页只访问本机 HTTP/WebSocket。本目录都是新增文件，没有修改 serial-test 下已有源码。
+软件侧链路。桥接进程持有设备连接，网页只访问本机 HTTP/WebSocket。本目录是新增目录；Ubuntu 24.04 迁移另外改了上级目录的 `pc_service.py`（平台抽象）并新增了 `start_bridge.sh`。
 
 ## 启动
 
+```bat
+py -3 serial_bridge.py
+py -3 serial_bridge.py --port COM10 --http-port 8765
+py -3 serial_bridge.py --transport tcp --tcp 127.0.0.1:45111   # 软件替身，无硬件
 ```
-python.exe serial_bridge.py
-python.exe serial_bridge.py --port COM10 --http-port 8765
-python.exe serial_bridge.py --transport tcp --tcp 127.0.0.1:45111   # 软件替身，无硬件
+
+Ubuntu 24.04（在仓库根目录执行 `./start_bridge.sh` 等价于下面第一条）：
+
+```bash
+python3 serial_bridge.py
+python3 serial_bridge.py --port /dev/ttyACM0 --http-port 8765
+python3 serial_bridge.py --port /dev/serial/by-id/<板子的稳定链接>
 ```
 
 - HTTP 只绑定 `127.0.0.1`。默认页面是 `http://127.0.0.1:8765/`。
-- **`--transport usb`（默认）走板子的 USB CDC 虚拟串口**。板子枚举为 `VID 0483 / PID 5740`（usbser），Windows 装成虚拟 COM 口。
-- **`--port` 省略时自动识别**该设备的 COM 号（读注册表 `Enum\USB\VID_0483&PID_5740` 的 `FriendlyName`，例如 `USB 串行设备 (COM10)`）。识别不到会以 `reconnecting` 重试，`last_error` 里说明原因。
+- **`--transport usb`（默认）走板子的 USB CDC 串口**。板子枚举为 `VID 0483 / PID 5740`：Windows 上 usbser 装成 `COM10`，Linux 上 cdc_acm 装成 `/dev/ttyACM0`。
+- **`--port` 省略时自动识别**该设备的串口名：Windows 读注册表 `Enum\USB\VID_0483&PID_5740` 的 `FriendlyName`（例如 `USB 串行设备 (COM10)`）；Linux 先扫 `/dev/serial/by-id/`，再扫 `/sys/class/tty/ttyACM*/device` 的 `idVendor`/`idProduct`。两条路径都只查路径与属性，不打开端口。识别不到会以 `reconnecting` 重试，`last_error` 里说明原因。
+- 选型与开关都在 `pc_service`：`open_serial_port()` 在 `os.name == "nt"` 时用 `Win32Port`（ctypes + kernel32，行为与迁移前完全一致），其余平台用 `PosixPort`（`os.open` + `termios`，raw 115200 8N1）。
 - `--vid` / `--pid` 可覆盖默认 `0x0483` / `0x5740`，写成 `0x1234` 或十进制。
 - `--transport tcp` 是**软件替身**模式：连 `127.0.0.1:45111`，完全不碰硬件，用于自动化测试。`--tcp` 只接受 `127.0.0.1` 或 `localhost`。
 - USB CDC 虚拟串口的**波特率没有意义**，固件忽略；别用波特率扫描查 USB 链路。
 
 测试：
 
+```bat
+py -3 test_bridge_api.py            # Windows
 ```
-C:\Users\ASUS\AppData\Local\Programs\Python\Python313\python.exe test_bridge_api.py
+
+```bash
+python3 test_bridge_api.py          # Ubuntu 24.04
 ```
+
+共 31 个测试：26 个原 API 测试 + 5 个平台分支/设备发现测试。后者在 Windows 上也会跑
+（用临时目录伪造 sysfs 树，不碰真实设备）。
+
+## Ubuntu 24.04
+
+- **无第三方依赖**：串口走标准库 `os.open` + `termios`，设备发现走 sysfs，
+  不需要 `pyserial` / `pyudev`，仓库里也没有 `requirements.txt`。
+- **权限**：`/dev/ttyACM0` 默认属于 `dialout` 组，不在组里会 `Permission denied`：
+
+  ```bash
+  sudo usermod -aG dialout "$USER"     # 重新登录（或 newgrp dialout）后生效
+  ```
+
+- **两种端口写法**：`--port /dev/ttyACM0` 用的是内核枚举编号，插拔别的串口设备后可能
+  变化；`--port /dev/serial/by-id/<稳定链接>` 指向同一个设备且不会变，建议优先用。
+  链接名由板子的 USB 描述符决定，形如 `usb-STMicroelectronics_...-if00`，**确切名字待实机确认**。
+- **启动**：仓库根目录的 `./start_bridge.sh [参数]` 会先 `cd` 到脚本所在目录再
+  `exec python3 bridge/serial_bridge.py "$@"`，从任何目录调用都可以。
+- **待实机确认**：`PosixPort` 在真实 `/dev/ttyACM0` 上的 raw 115200 8N1 收发、
+  短写/EAGAIN 的实际行为，以及 `/dev/serial/by-id` 链接名。本机是 Windows，
+  只验证到平台选型与设备发现的纯路径分支。
 
 ## API
 
@@ -103,11 +138,16 @@ C:\Users\ASUS\AppData\Local\Programs\Python\Python313\python.exe test_bridge_api
 ## 验证状态
 
 **已验证**
-- 26 个 API 测试全过（`python -m unittest test_bridge_api`），无串口、无硬件依赖
+- 31 个测试全过（`python -m unittest test_bridge_api`）：26 个原 API 测试，加 5 个
+  `os.name` 选型 / POSIX 设备发现测试（在 Windows 上也会跑），无串口、无硬件依赖
+- Windows 路径未被破坏：`py -3 pc_service.py --selftest` 输出 `PC_SELFTEST pass`
+  （仍包含 DCB=28 / COMMTIMEOUTS=20 的尺寸断言）
 - 真实链路已打通：Web 发 `rel_rotate` 能驱动电机，`g_dbg_can_tx_ok` 随命令增长
 - 只读诊断 `jstat` / `qstat` / `probe` 可安全反复调用
 
 **未验证 / 阻塞**
-- USB CDC **只发不收**：设备枚举正常，但 PC→板子的 `WriteFile` 失败。
+- USB CDC **只发不收**：设备枚举正常，但 PC→板子的写失败（Windows 上是 `WriteFile`）。
   已排除非线、非 bridge 逻辑、非缓冲区、非 GPIO 顺序，需示波器看 D+/D- 物理信号。
+- **Ubuntu 24.04 上的真实收发未测**（待实机确认）：本机是 Windows，`PosixPort` 的
+  termios 配置只在代码与 `--selftest` 常量断言层面验证过。
 - 浏览器实测由经理集成测试负责

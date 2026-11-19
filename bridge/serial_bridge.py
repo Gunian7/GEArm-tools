@@ -286,13 +286,15 @@ class TcpDeviceLink(DeviceLink):
 class UsbCdcDeviceLink(DeviceLink):
     """Real device link over the board's USB CDC virtual COM port.
 
-    The board enumerates as VID 0483 / PID 5740 (usbser), which Windows exposes
-    as a COM port. That port is the primary link to the arm; the CH340/USART1
-    wiring is only a fallback and is not used here. Baud is meaningless for
-    USB CDC - the firmware ignores it.
+    The board enumerates as VID 0483 / PID 5740 (usbser on Windows, cdc_acm on
+    Linux), which the host exposes as a serial port: "COM10" on Windows,
+    "/dev/ttyACM0" on Linux. That port is the primary link to the arm; the
+    CH340/USART1 wiring is only a fallback and is not used here. Baud is
+    meaningless for USB CDC - the firmware ignores it.
 
-    Port resolution: explicit ``port`` argument, else the registry lookup for
-    the board's VID/PID (see pc.find_usb_port). Raises ConfigError when no
+    Port resolution: explicit ``port`` argument, else the platform lookup for
+    the board's VID/PID -- the registry on Windows, /dev/serial/by-id then
+    /sys/class/tty on Linux (see pc.find_usb_port). Raises ConfigError when no
     such device can be found, so the bridge reports a clear reconnect reason.
     """
 
@@ -308,11 +310,12 @@ class UsbCdcDeviceLink(DeviceLink):
         if not name:
             raise ConfigError(
                 "no USB CDC device found (VID %04X/PID %04X); plug in the board's "
-                "USB cable, or pass --port COMx" % (pc.USB_CDC_VID, pc.USB_CDC_PID)
+                "USB cable, or pass --port COM10 (Windows) / /dev/ttyACM0 (Linux)"
+                % (pc.USB_CDC_VID, pc.USB_CDC_PID)
             )
         self.name = name
         try:
-            self._port = pc.Win32Port(name)
+            self._port = pc.open_serial_port(name)
         except OSError as exc:
             raise ConfigError("cannot open %s: %s" % (name, exc))
 
@@ -1282,11 +1285,13 @@ def _usb_id(text, default, name):
 def plan_runtime(argv):
     parser = argparse.ArgumentParser(description="GEArm localhost bridge (USB CDC device link)")
     parser.add_argument("--transport", choices=("usb", "tcp"), default="usb",
-                        help="usb = the board's USB CDC COM port (default); "
+                        help="usb = the board's USB CDC serial port, COM10 on Windows "
+                             "or /dev/ttyACM0 on Linux (default); "
                              "tcp = localhost software stand-in, no hardware")
     parser.add_argument("--tcp", default="127.0.0.1:45111", help="virtual device host:port, loopback only")
     parser.add_argument("--port", default=None,
-                        help="COM port for --transport usb, e.g. COM10. Omit to auto-detect the board's USB CDC port.")
+                        help="serial port for --transport usb, e.g. COM10 on Windows or "
+                             "/dev/ttyACM0 on Linux. Omit to auto-detect the board's USB CDC port.")
     parser.add_argument("--vid", default=None, help="board USB VID, default 0x%04X" % pc.USB_CDC_VID)
     parser.add_argument("--pid", default=None, help="board USB PID, default 0x%04X" % pc.USB_CDC_PID)
     parser.add_argument("--http-port", type=int, default=8765)

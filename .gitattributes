@@ -1,0 +1,28 @@
+# 行尾归一：仓库内统一按 LF 存储，检出也用 LF。
+#
+# “保持原样”一节里的文件在本分支之前就已经以 CRLF 提交进索引；在这里把它们
+# 一次性归一会变成 34 个文件的全库重写 diff，因此先用 -text -eol 钉住现状，
+# 等单独做一次“行尾归一”提交时再删掉那几行。
+* text=auto eol=lf
+
+# bridge/web/vendor 下是纯文本第三方 JS（three.js 及两个 addons），必须按文本处理
+bridge/web/vendor/** text eol=lf
+
+# 二进制：不做行尾转换
+*.pdf binary
+*.STL binary
+*.png binary
+*.jpg binary
+*.zip binary
+
+# Windows 侧 PowerShell 脚本保留 CRLF
+*.ps1 text eol=crlf
+
+# --- 保持原样：索引里已是 CRLF 的历史文件（避免全库重写）---
+usb/** -text -eol
+bridge/serial_bridge.py -text -eol
+bridge/test_bridge_api.py -text -eol
+bridge/web/viewer.html -text -eol
+bridge/web/viewer.js -text -eol
+episode_recorder.py -text -eol
+pc_service.py -text -eol

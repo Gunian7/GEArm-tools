@@ -2,21 +2,31 @@
 """Stage-0 GEArm telemetry reader over the board's USB CDC virtual COM port.
 
 The board (DM-MC02 / STM32H723) exposes a USB CDC device (VID 0483, PID 5740)
-that Windows installs as a virtual COM port. That port is the primary link to
-the arm; the old CH340/USART1 path is only a fallback.
+that the host turns into a virtual serial port: "COM10" on Windows (usbser),
+"/dev/ttyACM0" on Linux (cdc_acm). That port is the primary link to the arm;
+the old CH340/USART1 path is only a fallback.
 
 Sends only PING and QUERY. Motion, enable, speed, position, homing and
 parameter-write frames are refused before any byte is produced.
 --selftest uses an in-process virtual transport and does not open a port.
 
-Standard library only.
+Standard library only. Windows drives ctypes + kernel32 and POSIX drives os +
+termios; each of those two imports exists on exactly one platform, so both are
+pulled in only on the branch that needs them and this module stays importable
+everywhere.
 """
 import argparse
+import os
 import re
 import sys
 import time
 import ctypes
-from ctypes import wintypes
+
+try:  # ctypes.wintypes declares VARIANT_BOOL with the "v" field type, which
+    # only Windows defines, so the import itself raises ValueError elsewhere.
+    from ctypes import wintypes
+except (ImportError, ValueError):  # pragma: no cover - POSIX only
+    wintypes = None
 
 SOF = 0xA5
 POLY = 0x07
@@ -100,12 +110,10 @@ def _reg_query(key, name):
     return value
 
 
-def find_usb_port(vid=USB_CDC_VID, pid=USB_CDC_PID):
-    """Return the board's USB CDC COM port name (e.g. "COM10"), or None.
+def _find_usb_port_windows(vid, pid):
+    """Windows: registry Enum\\USB\\VID_xxxx&PID_yyyy -> "COM10", or None.
 
-    Looked up in the registry under Enum\\USB\\VID_xxxx&PID_yyyy so it works
-    whether or not the port is currently open, and never opens the port.
-    Returns None on non-Windows or when the device has never been seen.
+    Works whether or not the port is currently open, and never opens it.
     """
     try:
         import winreg
@@ -151,6 +159,106 @@ def find_usb_port(vid=USB_CDC_VID, pid=USB_CDC_PID):
                 winreg.CloseKey(device)
     finally:
         winreg.CloseKey(root)
+
+
+# sysfs / devfs mount points, used as the defaults of "injectable" parameters
+# so the POSIX discovery can be exercised against a fake tree on any platform.
+SYS_ROOT = "/sys"
+DEV_ROOT = "/dev"
+
+
+def _read_text(path):
+    try:
+        with open(path, "r") as handle:
+            return handle.read().strip()
+    except OSError:
+        return None
+
+
+def _sysfs_usb_ids(node, sys_root, levels=8):
+    """Return (vid, pid) read from a sysfs node, walking up towards the device.
+
+    /sys/class/tty/ttyACM0/device points at the USB *interface* (1-1:1.0);
+    idVendor/idProduct live one level higher, on the USB *device* (1-1). The
+    walk is capped at "levels" and never leaves sys_root.
+    """
+    stop = os.path.realpath(sys_root)
+    current = os.path.realpath(node)
+    for _ in range(levels):
+        vendor = _read_text(os.path.join(current, "idVendor"))
+        product = _read_text(os.path.join(current, "idProduct"))
+        if vendor and product:
+            try:
+                return int(vendor, 16), int(product, 16)
+            except ValueError:
+                return None
+        parent = os.path.dirname(current)
+        if current == stop or parent == current:
+            return None
+        current = parent
+    return None
+
+
+def _tty_usb_ids(tty_name, sys_root):
+    return _sysfs_usb_ids(os.path.join(sys_root, "class", "tty", tty_name, "device"), sys_root)
+
+
+def _dev_node(dev_root, name):
+    """Build a /dev-style path with a POSIX separator, whatever os.sep is."""
+    return dev_root.rstrip("/") + "/" + name
+
+
+def _find_usb_port_posix(vid, pid, sys_root=SYS_ROOT, dev_root=DEV_ROOT):
+    """POSIX: return "/dev/ttyACM0" for the matching USB CDC device, or None.
+
+    Pure path work -- the port is never opened. Two passes:
+
+      1. /dev/serial/by-id/ holds stable symlinks; resolve each to its
+         /dev/ttyACM<N> and compare that tty's sysfs USB ids.
+      2. otherwise scan /sys/class/tty/ttyACM*/device, walk up to the USB
+         device node and return /dev/ttyACM<N> on a VID/PID match.
+    """
+    by_id = os.path.join(dev_root, "serial", "by-id")
+    try:
+        entries = sorted(os.listdir(by_id))
+    except OSError:
+        entries = []
+    for entry in entries:
+        try:
+            target = os.path.realpath(os.path.join(by_id, entry))
+        except OSError:
+            continue
+        name = os.path.basename(target)
+        if not name.startswith("ttyACM"):
+            continue
+        if _tty_usb_ids(name, sys_root) == (vid, pid):
+            return _dev_node(dev_root, name)
+
+    tty_root = os.path.join(sys_root, "class", "tty")
+    try:
+        names = sorted(os.listdir(tty_root))
+    except OSError:
+        return None
+    for name in names:
+        if not name.startswith("ttyACM"):
+            continue
+        if _tty_usb_ids(name, sys_root) == (vid, pid):
+            return _dev_node(dev_root, name)
+    return None
+
+
+def find_usb_port(vid=USB_CDC_VID, pid=USB_CDC_PID, sys_root=SYS_ROOT, dev_root=DEV_ROOT):
+    """Return the board's USB CDC serial port name, or None.
+
+    Windows: registry lookup under Enum\\USB\\VID_xxxx&PID_yyyy -> "COM10".
+    POSIX:   /dev/serial/by-id, then /sys/class/tty/ttyACM* -> "/dev/ttyACM0".
+
+    Neither branch opens the port, and None means the device has never been
+    seen (or, on Windows, that winreg is unavailable).
+    """
+    if os.name == "nt":
+        return _find_usb_port_windows(vid, pid)
+    return _find_usb_port_posix(vid, pid, sys_root, dev_root)
 
 
 def crc8(data: bytes) -> int:
@@ -373,34 +481,37 @@ class VirtualPort:
         return take
 
 
-class DCB(ctypes.Structure):
-    _fields_ = [
-        ("DCBlength", wintypes.DWORD),
-        ("BaudRate", wintypes.DWORD),
-        ("flags", wintypes.DWORD),
-        ("wReserved", wintypes.WORD),
-        ("XonLim", wintypes.WORD),
-        ("XoffLim", wintypes.WORD),
-        ("ByteSize", wintypes.BYTE),
-        ("Parity", wintypes.BYTE),
-        ("StopBits", wintypes.BYTE),
-        ("XonChar", ctypes.c_char),
-        ("XoffChar", ctypes.c_char),
-        ("ErrorChar", ctypes.c_char),
-        ("EofChar", ctypes.c_char),
-        ("EvtChar", ctypes.c_char),
-        ("wReserved1", wintypes.WORD),
-    ]
+if wintypes is not None:  # Windows only: POSIX has no COMMCONFIG at all.
+    class DCB(ctypes.Structure):
+        _fields_ = [
+            ("DCBlength", wintypes.DWORD),
+            ("BaudRate", wintypes.DWORD),
+            ("flags", wintypes.DWORD),
+            ("wReserved", wintypes.WORD),
+            ("XonLim", wintypes.WORD),
+            ("XoffLim", wintypes.WORD),
+            ("ByteSize", wintypes.BYTE),
+            ("Parity", wintypes.BYTE),
+            ("StopBits", wintypes.BYTE),
+            ("XonChar", ctypes.c_char),
+            ("XoffChar", ctypes.c_char),
+            ("ErrorChar", ctypes.c_char),
+            ("EofChar", ctypes.c_char),
+            ("EvtChar", ctypes.c_char),
+            ("wReserved1", wintypes.WORD),
+        ]
 
-
-class COMMTIMEOUTS(ctypes.Structure):
-    _fields_ = [
-        ("ReadIntervalTimeout", wintypes.DWORD),
-        ("ReadTotalTimeoutMultiplier", wintypes.DWORD),
-        ("ReadTotalTimeoutConstant", wintypes.DWORD),
-        ("WriteTotalTimeoutMultiplier", wintypes.DWORD),
-        ("WriteTotalTimeoutConstant", wintypes.DWORD),
-    ]
+    class COMMTIMEOUTS(ctypes.Structure):
+        _fields_ = [
+            ("ReadIntervalTimeout", wintypes.DWORD),
+            ("ReadTotalTimeoutMultiplier", wintypes.DWORD),
+            ("ReadTotalTimeoutConstant", wintypes.DWORD),
+            ("WriteTotalTimeoutMultiplier", wintypes.DWORD),
+            ("WriteTotalTimeoutConstant", wintypes.DWORD),
+        ]
+else:  # pragma: no cover - POSIX only
+    DCB = None
+    COMMTIMEOUTS = None
 
 
 def open_port(name: str):
@@ -467,6 +578,109 @@ class Win32Port:
         self.kernel32.CloseHandle(self.handle)
 
 
+class PosixPort:
+    """POSIX serial port built on os.open + termios (standard library only).
+
+    Raw 115200 8N1, no modem control, no flow control. termios and select are
+    imported inside __init__ because termios does not exist on Windows, and a
+    top-level import would make this module unusable there.
+
+    Every failure surfaces as OSError: serial_bridge maps OSError onto
+    ConfigError/ConnectionError, and that contract is load-bearing.
+    """
+
+    BAUDRATE = 115200
+    BYTESIZE = 8
+    PARITY = "N"
+    STOPBITS = 1
+    READ_TIMEOUT = 0.05   # seconds; mirrors the win32 COMMTIMEOUTS 50 ms total
+    WRITE_TIMEOUT = 0.5
+
+    def __init__(self, name):
+        import select
+        import termios
+        global OPEN_COUNT
+        OPEN_COUNT += 1
+        self.name = name
+        self.select = select
+        self.termios = termios
+        self.fd = None
+        fd = os.open(name, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+        try:
+            self._set_raw(fd)
+        except OSError:
+            os.close(fd)
+            raise
+        self.fd = fd
+
+    def _set_raw(self, fd):
+        """Put the tty into raw 115200 8N1 mode (the cfmakeraw equivalent)."""
+        termios = self.termios
+        iflag, oflag, cflag, lflag, _ispeed, _ospeed, cc = termios.tcgetattr(fd)
+        iflag &= ~(termios.IGNBRK | termios.BRKINT | termios.PARMRK | termios.ISTRIP
+                   | termios.INLCR | termios.IGNCR | termios.ICRNL | termios.IXON)
+        oflag &= ~termios.OPOST
+        lflag &= ~(termios.ECHO | termios.ECHONL | termios.ICANON | termios.ISIG
+                   | termios.IEXTEN)
+        cflag &= ~(termios.CSIZE | termios.PARENB | termios.CSTOPB)
+        cflag &= ~getattr(termios, "CRTSCTS", 0)
+        cflag |= termios.CS8 | termios.CREAD | termios.CLOCAL
+        cc = list(cc)
+        cc[termios.VMIN] = 0
+        cc[termios.VTIME] = 0
+        speed = getattr(termios, "B%d" % self.BAUDRATE)
+        termios.tcsetattr(fd, termios.TCSANOW,
+                          [iflag, oflag, cflag, lflag, speed, speed, cc])
+
+    def write(self, data: bytes):
+        view = memoryview(bytes(data))
+        deadline = time.monotonic() + self.WRITE_TIMEOUT
+        while len(view):
+            try:
+                written = os.write(self.fd, view)
+            except InterruptedError:
+                continue
+            except BlockingIOError:
+                written = 0
+            if written <= 0:  # EAGAIN: wait for room in the tty buffer, retry
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise OSError("write timed out on %s" % self.name)
+                self.select.select([], [self.fd], [], remaining)
+                continue
+            view = view[written:]
+
+    def read(self, n: int) -> bytes:
+        """Return up to n bytes; b"" when nothing arrived within READ_TIMEOUT."""
+        try:
+            ready, _write, _err = self.select.select([self.fd], [], [], self.READ_TIMEOUT)
+        except InterruptedError:
+            return b""
+        if not ready:
+            return b""
+        try:
+            return os.read(self.fd, n)
+        except (BlockingIOError, InterruptedError):
+            return b""
+
+    def close(self):
+        if self.fd is None:
+            return
+        fd, self.fd = self.fd, None
+        os.close(fd)
+
+
+def open_serial_port(name: str):
+    """Open name with the port class of the running platform.
+
+    Windows keeps the existing kernel32 path (Win32Port); everything else uses
+    the os + termios path (PosixPort). Both raise OSError on failure.
+    """
+    if os.name == "nt":
+        return Win32Port(name)
+    return PosixPort(name)
+
+
 def print_frames(frames, out):
     for frame in frames:
         if frame["type"] == TELEM:
@@ -527,8 +741,18 @@ def selftest(out=sys.stdout) -> int:
     run_reader(port, [0, 1, 2], 0.05, cap)
     if OPEN_COUNT != before:
         raise SystemExit("selftest opened a port")
-    if ctypes.sizeof(DCB) != 28 or ctypes.sizeof(COMMTIMEOUTS) != 20:
-        raise SystemExit("win32 struct size")
+    if os.name == "nt":
+        if ctypes.sizeof(DCB) != 28 or ctypes.sizeof(COMMTIMEOUTS) != 20:
+            raise SystemExit("win32 struct size")
+    else:
+        # POSIX has no DCB: check the raw line settings PosixPort programs and
+        # the three methods DeviceLink calls instead.
+        settings = (PosixPort.BAUDRATE, PosixPort.BYTESIZE, PosixPort.PARITY, PosixPort.STOPBITS)
+        if settings != (115200, 8, "N", 1):
+            raise SystemExit("posix serial parameters changed: %r" % (settings,))
+        for _method in ("read", "write", "close"):
+            if not callable(getattr(PosixPort, _method, None)):
+                raise SystemExit("posix port is missing %s()" % _method)
     if port.mcu.can != [bytes([0x1F, 0x6B]), bytes([0x24, 0x6B]), bytes([0x3A, 0x6B])]:
         raise SystemExit("can whitelist bytes changed: %r" % port.mcu.can)
     blob = "".join(text)
@@ -555,7 +779,9 @@ def selftest(out=sys.stdout) -> int:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Read-only GEArm telemetry client (USB CDC)")
-    ap.add_argument("port", nargs="?", help="COM port, for example COM10. Omit to auto-detect the board's USB CDC port.")
+    ap.add_argument("port", nargs="?",
+                    help="serial port, for example COM10 on Windows or /dev/ttyACM0 "
+                         "on Linux. Omit to auto-detect the board's USB CDC port.")
     ap.add_argument("--selftest", action="store_true", help="virtual transport closed loop, no hardware")
     ap.add_argument("--query", type=int, action="append", choices=[0, 1, 2], help="whitelist query 0 version, 1 voltage, 2 state")
     ap.add_argument("--seconds", type=float, default=5.0)
@@ -566,12 +792,12 @@ def main(argv=None):
     if not port_name:
         port_name = find_usb_port()
         if not port_name:
-            ap.error("no COM port given and no USB CDC device (VID %04X/PID %04X) found; "
+            ap.error("no serial port given and no USB CDC device (VID %04X/PID %04X) found; "
                      "plug the board's USB cable in or pass the port explicitly"
                      % (USB_CDC_VID, USB_CDC_PID))
         sys.stderr.write("auto-detected %s (VID %04X/PID %04X)\n"
                          % (port_name, USB_CDC_VID, USB_CDC_PID))
-    port = Win32Port(port_name)
+    port = open_serial_port(port_name)
     try:
         run_reader(port, args.query or [], args.seconds, sys.stdout)
     finally:

@@ -5,8 +5,10 @@ The fake device is a LoopbackDeviceLink fed with scripted byte strings.
 """
 import base64
 import json
+import os
 import socket
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -54,6 +56,14 @@ def telemetry(heartbeat, init_stage, tx_enqueued, tx_complete, rx_count, matched
     blob[33] = len(raw)
     blob[34:34 + len(raw)] = raw
     return frame(pc.TELEM, bytes(blob))
+
+
+def write_sysfs_ids(directory, vendor, product):
+    """Fake the idVendor/idProduct pair of a sysfs USB device node."""
+    os.makedirs(directory, exist_ok=True)
+    for name, value in (("idVendor", vendor), ("idProduct", product)):
+        with open(os.path.join(directory, name), "w") as handle:
+            handle.write(value + "\n")
 
 
 class ScriptedDevice(sb.LoopbackDeviceLink):
@@ -708,10 +718,10 @@ class BridgeApiTest(unittest.TestCase):
             def close(self):
                 self.closed = True
 
-        real_find, real_port = pc.find_usb_port, pc.Win32Port
+        real_find, real_open = pc.find_usb_port, pc.open_serial_port
         try:
             pc.find_usb_port = lambda **kwargs: "COM10"
-            pc.Win32Port = FakePort
+            pc.open_serial_port = FakePort
             link = sb.UsbCdcDeviceLink()
             self.assertEqual(link.name, "COM10")
             link.send(b"abc")
@@ -732,13 +742,13 @@ class BridgeApiTest(unittest.TestCase):
                 def read(self, n):
                     raise OSError("ReadFile failed")
 
-            pc.Win32Port = BadPort
+            pc.open_serial_port = BadPort
             bad = sb.UsbCdcDeviceLink("COM10")
             with self.assertRaises(ConnectionError):
                 bad.recv()
         finally:
             pc.find_usb_port = real_find
-            pc.Win32Port = real_port
+            pc.open_serial_port = real_open
         self.assertEqual(pc.OPEN_COUNT, OPEN_BEFORE)
 
     def test_tcp_loopback_device_without_serial(self):
@@ -814,6 +824,104 @@ class BridgeApiTest(unittest.TestCase):
         for text in (disk_html, disk_js, disk_estop):
             self.assertNotIn("http://", text.lower())
             self.assertNotIn("https://", text.lower())
+
+
+    def test_open_serial_port_selects_the_platform_class(self):
+        """选型：os.name == "nt" 走 Win32Port，其它平台走 PosixPort。"""
+
+        class WinPort:
+            def __init__(self, name):
+                self.name = name
+
+        class PosixPort:
+            def __init__(self, name):
+                self.name = name
+
+        real_name = os.name
+        real_win, real_posix = pc.Win32Port, pc.PosixPort
+        try:
+            pc.Win32Port, pc.PosixPort = WinPort, PosixPort
+            os.name = "posix"
+            picked = pc.open_serial_port("/dev/ttyACM0")
+            self.assertIsInstance(picked, PosixPort)
+            self.assertEqual(picked.name, "/dev/ttyACM0")
+            os.name = "nt"
+            picked = pc.open_serial_port("COM10")
+            self.assertIsInstance(picked, WinPort)
+            self.assertEqual(picked.name, "COM10")
+        finally:
+            os.name = real_name
+            pc.Win32Port, pc.PosixPort = real_win, real_posix
+        self.assertEqual(pc.OPEN_COUNT, OPEN_BEFORE)
+
+    def test_find_usb_port_routes_to_the_posix_discovery(self):
+        """发现：非 Windows 时 find_usb_port 转调 POSIX 分支，且只返回路径。"""
+        calls = []
+
+        def fake_posix(vid, pid, sys_root=None, dev_root=None):
+            calls.append((vid, pid))
+            return "/dev/ttyACM0"
+
+        real_name = os.name
+        real_posix = pc._find_usb_port_posix
+        try:
+            pc._find_usb_port_posix = fake_posix
+            os.name = "posix"
+            self.assertEqual(pc.find_usb_port(), "/dev/ttyACM0")
+            self.assertEqual(pc.find_usb_port(0x1234, 0x5678), "/dev/ttyACM0")
+        finally:
+            pc._find_usb_port_posix = real_posix
+            os.name = real_name
+        self.assertEqual(calls, [(pc.USB_CDC_VID, pc.USB_CDC_PID), (0x1234, 0x5678)])
+        self.assertEqual(pc.OPEN_COUNT, OPEN_BEFORE)
+
+    def test_posix_discovers_ttyacm_from_sysfs_usb_ids(self):
+        """发现：伪造 sysfs 树，按 idVendor/idProduct 反查 /dev/ttyACM0。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sys_root = os.path.join(tmp, "sys")
+            device = os.path.join(sys_root, "class", "tty", "ttyACM0", "device")
+            os.makedirs(device)
+            ids_dir = os.path.dirname(device)   # /sys/class/tty/ttyACM0
+            write_sysfs_ids(ids_dir, "1a86", "7523")
+            self.assertIsNone(pc._find_usb_port_posix(pc.USB_CDC_VID, pc.USB_CDC_PID,
+                                                      sys_root=sys_root, dev_root="/dev"))
+            write_sysfs_ids(ids_dir, "0483", "5740")
+            self.assertEqual(pc._find_usb_port_posix(pc.USB_CDC_VID, pc.USB_CDC_PID,
+                                                     sys_root=sys_root, dev_root="/dev"),
+                             "/dev/ttyACM0")
+        self.assertEqual(pc.OPEN_COUNT, OPEN_BEFORE)
+
+    def test_posix_prefers_the_serial_by_id_symlink(self):
+        """发现：/dev/serial/by-id 的稳定链接优先于 sysfs 的扫描顺序。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            sys_root = os.path.join(tmp, "sys")
+            dev_root = os.path.join(tmp, "dev")
+            for index in (0, 2):
+                node = os.path.join(sys_root, "class", "tty", "ttyACM%d" % index, "device")
+                os.makedirs(node)
+                write_sysfs_ids(os.path.dirname(node), "0483", "5740")
+            by_id = os.path.join(dev_root, "serial", "by-id")
+            os.makedirs(by_id)
+            target = os.path.join(dev_root, "ttyACM2")
+            with open(target, "w"):
+                pass
+            try:
+                os.symlink(target, os.path.join(by_id, "usb-STMicroelectronics_STM32-if00"))
+            except (OSError, NotImplementedError):
+                self.skipTest("this platform/user cannot create symlinks")
+            self.assertEqual(pc._find_usb_port_posix(pc.USB_CDC_VID, pc.USB_CDC_PID,
+                                                     sys_root=sys_root, dev_root=dev_root),
+                             dev_root + "/ttyACM2")
+        self.assertEqual(pc.OPEN_COUNT, OPEN_BEFORE)
+
+    def test_posix_port_contract(self):
+        """PosixPort 的对外契约：raw 115200 8N1，且 read/write/close 齐备。"""
+        self.assertEqual((pc.PosixPort.BAUDRATE, pc.PosixPort.BYTESIZE,
+                          pc.PosixPort.PARITY, pc.PosixPort.STOPBITS), (115200, 8, "N", 1))
+        for name in ("read", "write", "close"):
+            self.assertTrue(callable(getattr(pc.PosixPort, name, None)), name)
+        for name in ("read", "write", "close"):
+            self.assertTrue(callable(getattr(pc.Win32Port, name, None)), name)
 
 
 if __name__ == "__main__":
