@@ -50,6 +50,9 @@ ARM_CMDS = {
     "rel_rotate", "auto", "hard_reset", "soft_reset", "zero",
     "estop", "estop_clear",
     "remote_enable", "remote_disable", "remote_event",
+    "qstat",                  # 只读诊断：查询驱动 3A/35/36/1F 状态
+    "jstat",                  # 只读诊断：6 轴的当前角度/软件限位范围/减速比
+    "probe",                  # 重新探测 CAN 总线成员（接好新电机后用）
 }
 ARM_MAX_LEN = 96          # 固件 USB 接收缓冲 128 字节，留足余量
 ARM_TERMINATOR = bytes((0x0D, 0x0A))  # CR+LF：固件认 0x0A 结束、忽略 0x0D

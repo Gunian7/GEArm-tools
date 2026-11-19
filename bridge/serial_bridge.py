@@ -83,6 +83,7 @@ _STATIC = {
     "/viewer.html": ("viewer.html", "text/html; charset=utf-8"),
     "/viewer.js": ("viewer.js", "text/javascript; charset=utf-8"),
     "/estop.js": ("estop.js", "text/javascript; charset=utf-8"),
+    "/limit_alert.js": ("limit_alert.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/vendor/three.module.js": ("vendor/three.module.js", "text/javascript; charset=utf-8"),
     "/vendor/addons/controls/OrbitControls.js": ("vendor/addons/controls/OrbitControls.js", "text/javascript; charset=utf-8"),
@@ -858,6 +859,19 @@ class Bridge:
             del self.device_lines[:-50]
             connection = self.connection
         self._broadcast({"kind": "device_line", "connection": connection, "line": line})
+
+        # 检测限位触发消息：!LIMIT_TRIGGERED jX
+        # 发送专用的 limit_alert 消息给 Web 端，触发弹窗警告
+        if line.startswith("!LIMIT_TRIGGERED j"):
+            try:
+                joint_id = line.split("j")[1].strip()
+                self._broadcast({
+                    "kind": "limit_alert",
+                    "joint_id": int(joint_id),
+                    "message": f"关节{joint_id}限位触发，已急停"
+                })
+            except (IndexError, ValueError):
+                log.warning("failed to parse limit alert: %s", line)
         # 把回显关联到正在等待的命令上，让 Web 能看到"这条命令被板子确认了"
         with self.lock:
             inflight = self.inflight
