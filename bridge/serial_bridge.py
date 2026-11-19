@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import queue
+import re
 import socket
 import sys
 import threading
@@ -41,6 +42,11 @@ CMD_TYPE = {
 # It is stripped in UsbCdcDeviceLink.send() before the bytes hit the wire.
 ARM_TEXT_MARKER = b"\x00"
 TERMINAL = {"acked", "device_error", "timeout", "transport_lost", "cancelled"}
+
+# 固件的限位告警行只有这一种合法形状：前缀 + 空格 + j + 纯十进制关节号。
+# 用整行锚定的正则而不是 str.split("j")：一旦固件文案里再出现一个 j，
+# 拆分法取到的是错误片段甚至直接越界，而解析失败曾经只是静默丢一行 warning。
+LIMIT_TRIGGERED_RE = re.compile(r"^!LIMIT_TRIGGERED j(\d+)$")
 
 
 def _split_text_lines(data: bytes):
@@ -864,17 +870,20 @@ class Bridge:
         self._broadcast({"kind": "device_line", "connection": connection, "line": line})
 
         # 检测限位触发消息：!LIMIT_TRIGGERED jX
-        # 发送专用的 limit_alert 消息给 Web 端，触发弹窗警告
-        if line.startswith("!LIMIT_TRIGGERED j"):
-            try:
-                joint_id = line.split("j")[1].strip()
-                self._broadcast({
-                    "kind": "limit_alert",
-                    "joint_id": int(joint_id),
-                    "message": f"关节{joint_id}限位触发，已急停"
-                })
-            except (IndexError, ValueError):
-                log.warning("failed to parse limit alert: %s", line)
+        # 发送专用的 limit_alert 消息给 Web 端，触发弹窗警告。
+        # 严格解析：整行必须匹配 LIMIT_TRIGGERED_RE，关节号必须是纯数字。
+        # 不匹配时只记一条带原始行的 warning，绝不广播编造的 joint_id ——
+        # 页面拿到一个假的关节号比什么都不弹更糟。
+        limit = LIMIT_TRIGGERED_RE.match(line)
+        if limit is not None:
+            joint_id = int(limit.group(1))
+            self._broadcast({
+                "kind": "limit_alert",
+                "joint_id": joint_id,
+                "message": f"关节{joint_id}限位触发，已急停"
+            })
+        elif line.startswith("!LIMIT_TRIGGERED"):
+            log.warning("unparsed limit alert line: %s", line)
         # 把回显关联到正在等待的命令上，让 Web 能看到"这条命令被板子确认了"
         with self.lock:
             inflight = self.inflight

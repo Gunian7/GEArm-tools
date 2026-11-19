@@ -53,21 +53,33 @@ function sendArm(text) {
       note('拒绝 ' + text + '：' + (res.error || '未知原因'), true);
       return;
     }
+    if (!res || typeof res.seq !== 'number') {
+      note('桥接未返回命令 id，无法确认板子回显：' + text, true);
+      return;
+    }
     note('已发送 ' + text + '，等待板子确认…');
-    waitReply(text, 2500);
+    waitReply(text, res.seq, 2500);
   }).catch(() => note('桥接无响应：' + text, true));
 }
 
 /* 等板子回显 "+OK <命令>"。拿不到就明确说没收到——
-   "发送成功"只说明桥接收下了，机械臂不动时这两件事看起来一模一样。 */
-function waitReply(text, timeoutMs) {
+   "发送成功"只说明桥接收下了，机械臂不动时这两件事看起来一模一样。
+
+   seq 是 bridge 给这条命令分配的单调整数（POST 响应回传），用它定位回显：
+   桥接把 arm 的 arg 归一化成 null，cmd 又恒为 'arm'，所以除 seq 之外的
+   字段都不能区分两条 arm 命令。原先按 arg === text 匹配，事实上永远匹配不上
+   （arg 是 null），"板子已确认"从来没有真正出现过；而一旦按"最近一条同名
+   命令"匹配，重复发同一个角度就会认到上一次的旧回显。 */
+function waitReply(text, seq, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   (function poll() {
     fetch('/api/status').then((r) => r.json()).then((s) => {
       const rows = s.commands || [];
       for (let i = rows.length - 1; i >= 0; i--) {
-        if (rows[i].arg === text && rows[i].device_reply) {
-          note('板子已确认 ' + text + ' → ' + rows[i].device_reply);
+        const row = rows[i];
+        if (row.seq !== seq || row.cmd !== 'arm') continue;
+        if (row.device_reply) {
+          note('板子已确认 ' + text + ' → ' + row.device_reply);
           return;
         }
       }

@@ -21,6 +21,15 @@
 
   var KEY = 'gearm.estop.active';
 
+  /* 急停命令走 arm 文本通道。桥接把 arm 的 arg 归一化成 null，
+     所以"这条回显是不是我的"只能靠 bridge 分配的命令 id（seq）判断，
+     命令名和参数都不足以区分两条 arm 命令。 */
+  var ESTOP_CMD = 'arm';
+  var ESTOP_ARG = 'estop';
+
+  /* mount() 之后持有按钮元素；公开 API 不依赖调用方自己找到按钮。 */
+  var mounted = null;
+
   function active() {
     try { return window.localStorage.getItem(KEY) === '1'; } catch (e) { return false; }
   }
@@ -36,18 +45,29 @@
     }).then(function (r) { return r.json(); });
   }
 
-  /* 轮询命令状态，直到板子的回显到达。
+  /* 轮询命令状态，直到"这一条"命令的回显到达。
      命令通道是异步的：POST 返回只说明桥接收下了，板子要到收到回显
      "+OK <cmd>" 才算真确认。所以发完必须等 device_reply，
-     不能拿"发送成功"当时效证据。 */
-  function waitDeviceReply(timeoutMs) {
+     不能拿"发送成功"当时效证据。
+
+     seq 是 bridge 在接收命令时分配的单调递增整数，POST 响应里回传。
+     用它做凭证而不是时间戳：时钟不可靠，而 seq 由桥接侧生成。
+
+     匹配必须是 seq 精确相等，不能"取最近一条带 device_reply 的"：
+     arm 命令的 arg 在桥接里被归一化成 null、cmd 又恒为 'arm'，
+     所以除了 seq 没有任何字段能区分两条 arm 命令。放宽成"更新的 seq"
+     就会把后续 rel_rotate 的回显认成急停的确认——正是要消除的缺陷。 */
+  function waitDeviceReply(seq, timeoutMs) {
     var deadline = Date.now() + (timeoutMs || 2500);
     return new Promise(function (resolve) {
       (function poll() {
         fetch('/api/status').then(function (r) { return r.json(); }).then(function (st) {
           var rows = st.commands || [];
           for (var i = rows.length - 1; i >= 0; i--) {
-            if (rows[i].device_reply) { resolve(rows[i].device_reply); return; }
+            var row = rows[i];
+            if (row.seq !== seq) { continue; }
+            if (row.cmd !== ESTOP_CMD) { continue; }
+            if (row.device_reply) { resolve(row.device_reply); return; }
           }
           if (Date.now() > deadline) { resolve(null); return; }
           setTimeout(poll, 120);
@@ -118,50 +138,79 @@
     }
   }
 
+  /* 触发急停，并把"到底发出去没发出去"以明确的字符串状态返回给调用方：
+       'confirmed'   板子的回显已确认这一条命令
+       'already'     本地已在急停态，未重复发送
+       'unconfirmed' 桥接已接收，但没等到板子回显
+       'rejected'    桥接拒绝（例如未连接）
+       'unreachable' 桥接无响应，或没回传命令 id，无法确认
+     返回状态而不是 undefined，是给自动急停（limit_alert.js）用的：
+     它不能靠"点了一下没报错"当成急停成功。 */
   function trigger(el) {
-    if (active()) { return; }          // 已在急停状态，不重复发送
+    if (active()) { return Promise.resolve('already'); }  // 已在急停状态，不重复发送
     setActive(true);
-    render(el, true);
+    if (el) { render(el, true); }
     flash('急停指令已发送，等待板子确认…', 'pending');
-    post('arm', 'estop').then(function (res) {
-      if (res && res.ok === false) {
+    logLine('急停指令已发送', true);
+    return post(ESTOP_CMD, ESTOP_ARG).then(function (res) {
+      if (!res || res.ok === false) {
         // 桥接层拒绝（例如未连接）。保留本地指示，让用户看到按钮有响应，
         // 但给出提示说明指令未必到达设备。
-        flash('急停指令被桥接拒绝：' + (res.error || '未知原因'), 'bad');
-        return;
+        var why = (res && res.error) || '未知原因';
+        flash('急停指令被桥接拒绝：' + why, 'bad');
+        logLine('急停指令被桥接拒绝：' + why, true);
+        return 'rejected';
       }
-      return waitDeviceReply(2500).then(function (reply) {
+      if (typeof res.seq !== 'number') {
+        // 没有命令 id 就无法把回显归属到这一条命令。宁可报"无法确认"，
+        // 也不能抓一条别人的回显当成自己的确认。
+        flash('桥接未返回命令 id，无法确认板子回显', 'bad');
+        logLine('桥接未返回命令 id，无法确认板子回显', true);
+        return 'unreachable';
+      }
+      return waitDeviceReply(res.seq, 2500).then(function (reply) {
         if (reply) {
           flash('板子已确认急停：' + reply, 'good');
-        } else {
-          flash('桥接已接收，但未收到板子回显（可能未连接或已掉线）', 'bad');
+          logLine('板子已确认急停：' + reply, false);
+          return 'confirmed';
         }
+        flash('桥接已接收，但未收到板子回显（可能未连接或已掉线）', 'bad');
+        logLine('未收到板子回显：急停是否生效未知', true);
+        return 'unconfirmed';
       });
     }).catch(function () {
       flash('桥接无响应，急停指令可能未送达', 'bad');
+      logLine('桥接无响应，急停指令可能未送达', true);
+      return 'unreachable';
     });
   }
 
   function clearEstop(el) {
     setActive(false);
     render(el, false);
-    post('arm', 'estop_clear').catch(function () {
+    post(ESTOP_CMD, 'estop_clear').catch(function () {
       flash('桥接无响应，解除指令可能未送达');
+      logLine('桥接无响应，解除指令可能未送达', true);
     });
   }
 
-  function flash(msg) {
+  /* 追加一条到页面日志。
+     与 flash 分开：flash 写按钮下方那一行反馈（build() 里的 #estop-feedback），
+     logLine 留一条可追溯的记录。两者原先同名，后一个函数声明覆盖前一个，
+     结果是反馈行从来收不到消息、所有提示都进了日志。 */
+  function logLine(msg, bad) {
     var log = document.getElementById('log');
     if (!log) { return; }
     var li = document.createElement('li');
     li.textContent = msg;
-    li.className = 'bad';
+    if (bad) { li.className = 'bad'; }
     log.insertBefore(li, log.firstChild);
     while (log.children.length > 50) { log.removeChild(log.lastChild); }
   }
 
   function mount() {
     var el = build();
+    mounted = el;
     // 优先放进 header（index / control / joystick 都有），
     // viewer.html 没有 header，用 fixed 定位兜底。
     var header = document.querySelector('header');
@@ -191,4 +240,13 @@
   } else {
     mount();
   }
+
+  /* 公开 API：自动急停（limit_alert.js）走这里，而不是去 click 那个按钮。
+     按钮由本文件注入，一旦加载顺序变化或页面变体没有它，
+     "点击"就会静默失效——限位已经触发，急停却没发出去，且没有任何提示。
+     trigger() 返回明确的处置状态，null 元素也能照常把命令发出去。 */
+  window.GEArmEstop = {
+    trigger: function () { return trigger(mounted); },
+    isActive: active
+  };
 })();

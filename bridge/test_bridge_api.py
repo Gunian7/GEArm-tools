@@ -538,6 +538,110 @@ class BridgeApiTest(unittest.TestCase):
         self.assertEqual(again[1]["state"], "device_error")
         self.assertEqual(again[1]["response"]["kind"], "error")
 
+    def test_every_status_command_row_carries_a_monotonic_id(self):
+        """每条 commands[] 都带整数 id，先后两条严格递增。
+
+        前端靠这个 id 把板子的回显归属到"自己发的那一条"命令上：
+        arm 命令的 arg 在桥接里归一化成 None、cmd 又恒为 'arm'，
+        所以除了 id 没有任何字段能区分两条 arm 命令。id 一旦缺失或重复，
+        页面就只能退回"拿最近一条回显"——那正是会被张冠李戴的做法。
+        """
+        link = ScriptedDevice([b"+OK estop\r\n", b"+OK rel_rotate 0 1\r\n"])
+        self.start(lambda: link)
+        self.assertTrue(wait_until(lambda: self.status()["connection"] == "connected"))
+        code, first = self.post({"cmd": "arm", "arg": "estop"})
+        code2, second = self.post({"cmd": "arm", "arg": "rel_rotate 0 1"})
+        self.assertEqual((code, code2), (200, 200))
+
+        # POST 响应直接回传该命令的 id，前端不需要先取水位再对齐
+        self.assertIsInstance(first["seq"], int)
+        self.assertIsInstance(second["seq"], int)
+        self.assertGreater(second["seq"], first["seq"], "后发的命令 id 必须严格更大")
+
+        rows = wait_until(lambda: (
+            (lambda r: len(r) == 2 and all(row["device_reply"] for row in r) and r)(
+                self.status()["commands"])
+        ))
+        self.assertTrue(rows, "两条 arm 命令都应拿到各自的 device_reply")
+        for row in self.status()["commands"]:
+            self.assertIsInstance(row["seq"], int, "每条 commands[] 都必须带整数 id")
+        self.assertEqual([row["seq"] for row in rows], [first["seq"], second["seq"]])
+        # 回显必须落在各自那条命令上，而不是"最近一条"
+        self.assertEqual(rows[0]["device_reply"], "+OK estop")
+        self.assertEqual(rows[1]["device_reply"], "+OK rel_rotate 0 1")
+
+    def collect_ws(self, sock, first, want=None, timeout=2.5):
+        """收 WebSocket 的 JSON 消息，看到 want 这种 kind 就返回，或等满 timeout。
+
+        不能直接用 ws_frames()：建连时 bridge 会先推一条 status hello，
+        固定帧数预算会被它吃掉，可能刚好在目标帧之前停住。
+        want=None 表示"等满整个窗口"，用于证明某条消息**没有**出现。
+        """
+        buf = first
+        items = []
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            frames, buf = decode_ws(buf)
+            for opcode, payload in frames:
+                if opcode == 1:
+                    items.append(json.loads(payload.decode("utf-8")))
+            if want is not None and any(item.get("kind") == want for item in items):
+                break
+            try:
+                chunk = sock.recv(4096)
+            except socket.timeout:
+                continue
+            if not chunk:
+                break
+            buf += chunk
+        return items
+
+    def test_limit_alert_broadcasts_parsed_joint_id(self):
+        """合法的 !LIMIT_TRIGGERED j3 广播 limit_alert，joint_id 是整数 3。"""
+        link = sb.LoopbackDeviceLink()
+        self.start(lambda: link)
+        self.assertTrue(wait_until(lambda: self.status()["connection"] == "connected"))
+        sock, rest = ws_handshake(self.port)
+        try:
+            link.push(b"!LIMIT_TRIGGERED j3\r\n")
+            items = self.collect_ws(sock, rest, want="limit_alert")
+        finally:
+            sock.close()
+        alerts = [item for item in items if item.get("kind") == "limit_alert"]
+        self.assertTrue(alerts, "合法的 !LIMIT_TRIGGERED j3 必须广播 limit_alert")
+        self.assertEqual(alerts[-1]["joint_id"], 3)
+        self.assertIsInstance(alerts[-1]["joint_id"], int)
+        self.assertIn("3", alerts[-1]["message"])
+
+    def test_malformed_limit_alert_is_not_broadcast(self):
+        """非严格匹配的限位行不得广播编造的 joint_id，且必须留下带原始行的 warning。"""
+        link = sb.LoopbackDeviceLink()
+        self.start(lambda: link)
+        self.assertTrue(wait_until(lambda: self.status()["connection"] == "connected"))
+        sock, rest = ws_handshake(self.port)
+        try:
+            with self.assertLogs("serial_bridge", level="WARNING") as captured:
+                link.push(b"!LIMIT_TRIGGERED joint0\r\n")
+                link.push(b"!LIMIT_TRIGGERED j\r\n")
+                # 固件文案里再出现一个 j：老的 line.split("j")[1] 会切出 "0"
+                # 并广播一个编造的 joint_id=0
+                link.push(b"!LIMIT_TRIGGERED j0 j1\r\n")
+                # want=None：等满整个窗口，用来证明 limit_alert 一条都没出现
+                items = self.collect_ws(sock, rest, want=None)
+                self.assertTrue(wait_until(
+                    lambda: len([rec for rec in captured.records
+                                 if "LIMIT_TRIGGERED" in rec.getMessage()]) >= 3,
+                    timeout=5.0,
+                ), "三条非法限位行都必须各留一条 warning")
+        finally:
+            sock.close()
+        alerts = [item for item in items if item.get("kind") == "limit_alert"]
+        self.assertEqual(alerts, [], "解析失败时绝不能广播 joint_id")
+        log_text = "\n".join(captured.output)
+        self.assertIn("!LIMIT_TRIGGERED joint0", log_text)
+        self.assertIn("!LIMIT_TRIGGERED j", log_text)
+        self.assertIn("!LIMIT_TRIGGERED j0 j1", log_text)
+
     def test_spurious_pong_does_not_complete_query(self):
         link = sb.LoopbackDeviceLink()
         self.start(lambda: link, command_timeout=0.8)

@@ -10,6 +10,11 @@
   let reconnectTimer = null;
   const RECONNECT_DELAY = 2000;
 
+  // 当前弹窗的 ESC 监听器。始终只保留一个：开新弹窗前先摘掉上一个，
+  // 关闭时（确定 / 点背景 / ESC 三条路径）也一定摘掉。否则监听器会随
+  // 告警次数累加，每次按 ESC 都要把陈年闭包跑一遍。
+  let escHandler = null;
+
   function connect() {
     if (ws && ws.readyState === WebSocket.OPEN) return;
 
@@ -55,31 +60,103 @@
     }
   }
 
+  /* 关节号必须是纯整数。它会被拼进 innerHTML，虽然 bridge 侧已用正则
+     归一化，这里再强制一次作为深度防御：归一之后不可能带 HTML 元字符。 */
+  function normalizeJointId(raw) {
+    const n = parseInt(raw, 10);
+    return Number.isInteger(n) ? n : null;
+  }
+
+  function describeEstop(status) {
+    if (status === 'confirmed') { return { ok: true, text: '自动急停已确认：板子已回显' }; }
+    if (status === 'already') { return { ok: true, text: '急停此前已处于生效状态，未重复发送' }; }
+    if (status === 'unconfirmed') {
+      return { ok: false, text: '自动急停已发出，但未收到板子回显（是否生效未知）' };
+    }
+    if (status === 'rejected') { return { ok: false, text: '自动急停未能发送：桥接拒绝' }; }
+    return { ok: false, text: '自动急停未能发送：桥接无响应或未返回命令 id' };
+  }
+
+  /* estop.js 的公开 API 不存在时的兜底：直接发命令，不再依赖那个按钮节点。
+     POST 响应里的 device_reply 是 bridge 对"这一条"命令的返回，归属明确。 */
+  function directEstop() {
+    return fetch('/api/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd: 'arm', arg: 'estop' })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (!res || res.ok === false) {
+        return { ok: false, text: '自动急停未能发送：桥接拒绝（' +
+          ((res && res.error) || '未知原因') + '）' };
+      }
+      if (res.device_reply) {
+        return { ok: true, text: '自动急停已确认：' + res.device_reply };
+      }
+      return { ok: false, text: '自动急停已发出，但未收到板子回显（是否生效未知）' };
+    }).catch(function () {
+      return { ok: false, text: '自动急停未能发送：桥接无响应' };
+    });
+  }
+
+  /* 自动急停。优先调用 estop.js 暴露的 API；该 API 不存在时直接 POST 兜底。
+     两条路的失败都必须返回一句写明"自动急停未能发送"的文字，
+     绝不允许静默：限位已经触发而急停没发出去，是必须让人看见的事。 */
+  function autoEstop() {
+    const api = window.GEArmEstop;
+    if (api && typeof api.trigger === 'function') {
+      return new Promise(function (resolve) {
+        let out;
+        try {
+          out = api.trigger();
+        } catch (e) {
+          resolve({ ok: false, text: '自动急停未能发送：estop API 调用异常（' + e + '）' });
+          return;
+        }
+        Promise.resolve(out).then(function (status) {
+          resolve(describeEstop(status));
+        }, function (e) {
+          resolve({ ok: false, text: '自动急停未能发送：estop API 调用失败（' + e + '）' });
+        });
+      });
+    }
+    return directEstop();
+  }
+
   function handleLimitAlert(msg) {
-    const jointId = msg.joint_id;
-    const message = msg.message || `关节${jointId}限位触发，已急停`;
+    const jointId = normalizeJointId(msg.joint_id);
+    const label = jointId === null ? '未知关节' : ('关节' + jointId);
+    const message = (typeof msg.message === 'string' && msg.message)
+      ? msg.message : (label + '限位触发');
 
     console.warn('[limit_alert]', message);
 
-    // 显示模态弹窗
-    showAlertModal(message, jointId);
+    // 先弹窗：安全警告不等异步结果。急停结论随后补进弹窗那一行。
+    const setEstopNote = showAlertModal(message, jointId);
 
-    // 触发急停按钮（如果存在）
-    const estopBtn = document.getElementById('estop-btn');
-    if (estopBtn) {
-      estopBtn.click();
-    }
+    autoEstop().then(function (result) {
+      console.warn('[limit_alert]', result.text);
+      setEstopNote(result.text);
+      addLog(result.text, !result.ok);
+    });
 
     // 在日志中添加警告
     addLog(message, true);
   }
 
   function showAlertModal(message, jointId) {
-    // 移除旧的弹窗（如果存在）
+    // 移除旧的弹窗，并先摘掉它遗留的 keydown 监听器。
+    // 只 remove() 节点不会摘监听器——监听器挂在 document 上。
     const oldModal = document.getElementById('limit-alert-modal');
     if (oldModal) {
-      oldModal.remove();
+      closeModal(oldModal);
+    } else if (escHandler) {
+      document.removeEventListener('keydown', escHandler);
+      escHandler = null;
     }
+
+    // jointId 已被 normalizeJointId() 强制成整数或 null，
+    // 拼进 innerHTML 的只可能是数字和固定文案。
+    const jointText = jointId === null ? '未知' : ('J' + jointId + ' (关节' + jointId + ')');
 
     // 创建弹窗
     const modal = document.createElement('div');
@@ -91,7 +168,8 @@
         <h2 class="limit-alert-title">限位触发警告</h2>
         <p class="limit-alert-message">${escapeHtml(message)}</p>
         <div class="limit-alert-details">
-          <strong>触发关节：</strong>J${jointId} (关节${jointId})
+          <strong>触发关节：</strong>${jointText}
+          <div id="limit-alert-estop">自动急停：发送中…</div>
         </div>
         <div class="limit-alert-actions">
           <button id="limit-alert-close" class="limit-alert-btn-primary">确定</button>
@@ -191,25 +269,40 @@
     const closeBtn = document.getElementById('limit-alert-close');
     if (closeBtn) {
       closeBtn.addEventListener('click', function () {
-        modal.remove();
+        closeModal(modal);
       });
     }
 
     // 点击背景关闭
     modal.addEventListener('click', function (e) {
       if (e.target === modal) {
-        modal.remove();
+        closeModal(modal);
       }
     });
 
-    // ESC 键关闭
-    const handleEsc = function (e) {
+    // ESC 键关闭。三条关闭路径统一走 closeModal()，都会摘掉监听器。
+    escHandler = function (e) {
       if (e.key === 'Escape') {
-        modal.remove();
-        document.removeEventListener('keydown', handleEsc);
+        closeModal(modal);
       }
     };
-    document.addEventListener('keydown', handleEsc);
+    document.addEventListener('keydown', escHandler);
+
+    // 返回一个"补写急停结论"的句柄：急停结果要等异步回来才确定。
+    const estopNote = document.getElementById('limit-alert-estop');
+    return function (text) {
+      if (estopNote) { estopNote.textContent = text; }
+    };
+  }
+
+  /* 唯一的关闭出口：先摘监听器，再删节点。
+     确定按钮 / 点背景 / ESC 三条路径都走这里，所以不会有残留。 */
+  function closeModal(modal) {
+    if (escHandler) {
+      document.removeEventListener('keydown', escHandler);
+      escHandler = null;
+    }
+    if (modal) { modal.remove(); }
   }
 
   function addLog(message, isBad) {
